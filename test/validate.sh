@@ -1,0 +1,19 @@
+#!/bin/bash
+
+rm -rf sketches && mkdir -p sketches
+rm -rf est && mkdir -p est
+
+SECONDS=0
+export sketching_options='-k 27 -w 31 -h 11 -m 2 -r 1 --frac'
+cat genome_names.txt | \
+  xargs -I{} -P 16 bash -c \
+  '../gidiff sketch `echo ${sketching_options}` -i genomes/{}.fna.gz -o sketches/{}.skc > /dev/null 2>&1'
+
+export mapping_options="-d 0.10 -l 10000 --chi-sq 10000"
+cat genome_pairs.txt | \
+   xargs -n 2 -L 1 -P 16 bash -c \
+   '../gidiff map `echo ${mapping_options}` -i sketches/"$1".skc -q genomes/"$0".fna.gz -o est/query_"$0"-ref_"$1".txt > /dev/null 2>&1'
+
+printf '%dh:%dm:%ds\n' $((SECONDS/3600)) $((SECONDS%3600/60)) $((SECONDS%60))
+
+diff --brief --recursive est/ gt/
