@@ -11,7 +11,7 @@
 
 class QIE;
 class LLH;
-class DIM;
+// class DIM;
 class RSeq;
 class QSeq;
 class LSHF;

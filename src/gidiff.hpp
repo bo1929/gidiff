@@ -12,7 +12,7 @@
 #include "hm.hpp"
 #include "CLI11.hpp"
 
-#define VERSION "v0.6.0"
+#define VERSION "v0.6.0-simd"
 #define PRINT_VERSION std::cerr << "krepp version: " << VERSION << std::endl;
 #define STRSTREAM_PRECISION 4
 
@@ -60,8 +60,6 @@ public:
     r = 1;
     frac = true;
     nrows = pow(2, 2 * h - 1);
-    // sdust_t = 0;
-    // sdust_w = 0;
   }
 
 protected:
@@ -107,11 +105,13 @@ private:
   std::filesystem::path output_path;
   std::ofstream output_file;
   std::ostream* output_stream = &std::cout;
+  
   uint32_t hdist_th = 4;
   uint64_t total_qseq = 0;
   uint64_t min_length = 0;
-  double dist_th = 0;
-  double chisq = 3.841; // 95%
+  double chisq = 3.841;
+  
+  std::vector<double> dist_th_vec;
 };
 
 #endif

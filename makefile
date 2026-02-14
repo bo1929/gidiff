@@ -3,12 +3,12 @@
 COMPILER ?= g++
 mode ?= dynamic  # Default to dynamic linking
 
-# TODO: remove -g
-CXXFLAGS += -std=c++17 -O3 -g
+# TODO: remove -g -pg
+CXXFLAGS += -std=c++17 -O3
 # -Wall
 WFLAGS += -Wno-unused-result -Wno-unused-command-line-argument -Wno-unknown-pragmas -Wno-undefined-inline
 
-# INC = -I?
+INC = -I./simde -DSIMDE_ENABLE_NATIVE_ALIASES
 
 # project files
 #--------------------------------------------
@@ -58,7 +58,7 @@ ifneq ($(CURL_SUPPORTED),no)
   endif
 endif
 
-VARDEF= -D _L_CURL=$(L_CURL)
+VARDEF= -D _L_CURL=$(L_CURL) -D SIMDE_ENABLE_NATIVE_ALIASES
 
 ARCH := $(shell uname -m)
 # Check for -mbmi2

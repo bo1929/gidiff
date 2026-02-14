@@ -36,9 +36,6 @@ bool BaseLSH::validate_configuration()
   if ((is_invalid = (k - h) > 16)) {
     std::cerr << "For compact k-mer encodings, h must be >= k-16!" << std::endl;
   }
-  // if (sdust_t == 0 || sdust_w == 0) {
-  //   std::cerr << "Setting --sdust-w or --sdust-t to 0 will disable dustmasker!" << std::endl;
-  // }
   return !is_invalid;
 }
 
@@ -92,10 +89,16 @@ void MapSketch::map_sequences()
   header_dreport(dreport_stream);
   qseq_sptr_t qs = std::make_shared<QSeq>(query);
   bool cont_reading = false;
-  params_t params = {hdist_th, min_length, dist_th, chisq};
+  
+  std::vector<params_t> params_vec;
+  params_vec.reserve(dist_th_vec.size());
+  for (double dist_th : dist_th_vec) {
+    params_vec.push_back({hdist_th, min_length, dist_th, chisq});
+  }
+  
   while ((cont_reading = qs->read_next_batch()) || !qs->is_batch_finished()) {
     total_qseq += qs->get_cbatch_size();
-    QIE qie(sketch, sketch->get_lshf(), qs, params);
+    QIE qie(sketch, sketch->get_lshf(), qs, params_vec);
     qie.map_sequences(*output_stream);
   }
 }
@@ -114,8 +117,6 @@ SketchTarget::SketchTarget(CLI::App& sc)
   sc.add_option("-r,--residue-lsh", r, "A k-mer x will be included only if r = LSH(x) mod m. [1]")
     ->check(CLI::NonNegativeNumber);
   sc.add_flag("--frac,!--no-frac", frac, "Include k-mers with r <= LSH(x) mod m. [true]");
-  // sc.add_option("--sdust-t", sdust_t, "SDUST threshold (NCBI dustmasker: 20). [0]")->check(CLI::NonNegativeNumber);
-  // sc.add_option("--sdust-w", sdust_w, "SDUST window (NCBI dustmasker: 64). [0]")->check(CLI::NonNegativeNumber);
   sc.callback([&]() {
     if (!(sc.count("-w") + sc.count("--win-len"))) {
       w = k + 6;
@@ -135,10 +136,18 @@ MapSketch::MapSketch(CLI::App& sc)
   sc.add_option("-i,--sketch-path", sketch_path, "Sketch file at <path> to query.")->required()->check(CLI::ExistingFile);
   sc.add_option("-o,--output-path", output_path, "Write output to a file at <path>. [stdout]");
   sc.add_option("--hdist-th", hdist_th, "Maximum Hamming distance for a k-mer to match. [4]")->check(CLI::NonNegativeNumber);
-  sc.add_option("--chi-sq", chisq, "Maximum Hamming distance for a k-mer to match. [4]")->check(CLI::NonNegativeNumber);
-  sc.add_option("-d,--dist-th", dist_th, "Maximum (or minimum) distance for an interval to match.")->required();
-  sc.add_option("-l,--min-length", min_length, "Maximum (or minimum) length for an interval to match.")->required();
+  sc.add_option("--chi-sq", chisq, "Chi-square threshold. [3.841]")->check(CLI::NonNegativeNumber);
+  sc.add_option("-d,--dist-th", dist_th_vec, "Distance threshold(s) - provide exactly 1 or 8 values")
+    ->required()
+    ->expected(1, 8);
+  sc.add_option("-l,--min-length", min_length, "Minimum interval length.")->required();
+  
   sc.callback([&]() {
+    if (dist_th_vec.size() != 1 && dist_th_vec.size() != 8) {
+      std::cerr << "Error: Must provide exactly 1 or 8 dist_th values, got " << dist_th_vec.size() << std::endl;
+      std::exit(1);
+    }
+    
     if (!output_path.empty()) {
       output_file.open(output_path);
       output_stream = &output_file;
@@ -151,7 +160,7 @@ int main(int argc, char** argv)
 {
   PRINT_VERSION
   std::ios::sync_with_stdio(false);
-  CLI::App app{"gidiff"};
+  CLI::App app{"gidiff - SIMD-accelerated genomic interval finder"};
   app.set_help_flag("--help");
   app.fallthrough();
 
@@ -176,7 +185,9 @@ int main(int argc, char** argv)
   for (int i = 0; i < argc; ++i) {
     invocation += std::string(argv[i]) + " ";
   }
-  invocation.pop_back();
+  if (!invocation.empty()) {
+    invocation.pop_back();
+  }
 
   auto tstart = std::chrono::system_clock::now();
   std::time_t tstart_f = std::chrono::system_clock::to_time_t(tstart);
@@ -201,7 +212,7 @@ int main(int argc, char** argv)
     std::chrono::duration<float> es_b = std::chrono::system_clock::now() - tstart;
     krepp_map.map_sequences();
     std::chrono::duration<float> es_s = std::chrono::system_clock::now() - tstart - es_b;
-    std::cerr << "Done maping sequences, elapsed: " << es_s.count() << " sec" << std::endl;
+    std::cerr << "Done mapping sequences, elapsed: " << es_s.count() << " sec" << std::endl;
     std::cerr << "Total number of sequences queried: " << krepp_map.get_total_qseq() << std::endl;
   }
 
