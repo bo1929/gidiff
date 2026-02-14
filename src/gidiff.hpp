@@ -2,8 +2,6 @@
 #define _GIDIFF_H
 
 #include <regex>
-
-#include "common.hpp"
 #include "types.hpp"
 #include "lshf.hpp"
 #include "rqseq.hpp"
@@ -11,6 +9,25 @@
 #include "sketch.hpp"
 #include "hm.hpp"
 #include "CLI11.hpp"
+
+#define VERSION "v0.6.0"
+#define PRINT_VERSION std::cerr << "krepp version: " << VERSION << std::endl;
+#define STRSTREAM_PRECISION 4
+
+extern uint32_t num_threads;
+extern std::string invocation;
+
+static std::string vec_to_str(const std::vector<uint8_t>& v)
+{
+  std::ostringstream oss;
+  oss << "[";
+  for (size_t i = 0; i < v.size(); ++i) {
+    if (i > 0) oss << ", ";
+    oss << static_cast<int>(v[i]);
+  }
+  oss << "]";
+  return oss.str();
+}
 
 const auto url_validator = CLI::Validator(
   [](std::string& input) {

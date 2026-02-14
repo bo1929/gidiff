@@ -108,7 +108,7 @@ private:
 
 class QSeq : public HandlerURL
 {
-  friend class SBatch;
+  friend class QIE;
 
 public:
   QSeq(std::string input);

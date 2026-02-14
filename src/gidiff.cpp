@@ -92,12 +92,11 @@ void MapSketch::map_sequences()
   header_dreport(dreport_stream);
   qseq_sptr_t qs = std::make_shared<QSeq>(query);
   bool cont_reading = false;
+  params_t params = {hdist_th, min_length, dist_th, chisq};
   while ((cont_reading = qs->read_next_batch()) || !qs->is_batch_finished()) {
     total_qseq += qs->get_cbatch_size();
-    SBatch sb(sketch, qs, hdist_th, dist_th, min_length, chisq);
-    {
-      sb.map_sequences(*output_stream);
-    }
+    QIE qie(sketch, sketch->get_lshf(), qs, params);
+    qie.map_sequences(*output_stream);
   }
 }
 

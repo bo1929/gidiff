@@ -8,7 +8,7 @@
 #include "btree.h"
 #include "phmap.h"
 
-class SBatch; // TODO
+class QIE;
 class LLH;
 class DIM;
 class RSeq;
@@ -29,7 +29,7 @@ using vvec = std::vector<std::vector<T>>;
 template<typename T>
 using vec = std::vector<T>;
 
-typedef std::shared_ptr<SBatch> sbatch_sptr_t; // TODO
+typedef std::shared_ptr<QIE> sbatch_sptr_t;
 typedef std::shared_ptr<LLH> llh_sptr_t;
 typedef std::shared_ptr<RSeq> rseq_sptr_t;
 typedef std::shared_ptr<QSeq> qseq_sptr_t;
@@ -41,6 +41,14 @@ typedef std::shared_ptr<Sketch> sketch_sptr_t;
 struct hmer_t
 {
   uint64_t x, y, z;
+};
+
+struct params_t
+{
+  uint32_t hdist_th;
+  uint64_t min_length;
+  double dist_th;
+  double chisq;
 };
 
 #define EXTRAARGS                                                                                                           \
