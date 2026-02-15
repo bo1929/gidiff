@@ -37,26 +37,16 @@ void DIM<T>::aggregate_mer(sketch_sptr_t sketch, uint32_t rix, enc_t enc_lr, uin
   if (hdist_min <= hdist_th) {
     merhit_count++;
     hdisthist_v[hdist_min]++;
-    if constexpr (std::is_same_v<T, double>) {
-      // sdc_v.push_back(llhf->get_sdc(hdist_min));
-      // fdc_v.push_back(llhf->get_fdc(hdist_min));
-      sdc_v[i] = llhf->get_sdc(hdist_min);
-      fdc_v[i] = llhf->get_fdc(hdist_min);
-    } else {
-      sdc_v[i] = llhf->get_sdc(hdist_min);
-      fdc_v[i] = llhf->get_fdc(hdist_min);
-    }
+    // sdc_v.push_back(llhf->get_sdc(hdist_min));
+    // fdc_v.push_back(llhf->get_fdc(hdist_min));
+    sdc_v[i] = llhf->get_sdc(hdist_min);
+    fdc_v[i] = llhf->get_fdc(hdist_min);
   } else {
     mermiss_count++;
-    if constexpr (std::is_same_v<T, double>) {
-      // sdc_v.push_back(llhf->get_sdc());
-      // fdc_v.push_back(llhf->get_fdc());
-      sdc_v[i] = llhf->get_sdc();
-      fdc_v[i] = llhf->get_fdc();
-    } else {
-      sdc_v[i] = llhf->get_sdc();
-      fdc_v[i] = llhf->get_fdc();
-    }
+    // sdc_v.push_back(llhf->get_sdc());
+    // fdc_v.push_back(llhf->get_fdc());
+    sdc_v[i] = llhf->get_sdc();
+    fdc_v[i] = llhf->get_fdc();
   }
   if constexpr (std::is_same_v<T, double>) {
     // fdt += fdc_v.back();
@@ -92,12 +82,12 @@ void DIM<T>::inclusive_scan()
       fdps_v[i] = fdps_v[i - 1] + fdc_v[i - 1];
       sdps_v[i] = sdps_v[i - 1] + sdc_v[i - 1];
     }
-    fdpmax_v.front() = -std::numeric_limits<double>::infinity();
+    fdpmax_v.front() = -std::numeric_limits<double>::max();
     std::inclusive_scan(
       fdps_v.begin(), fdps_v.end(), fdpmax_v.begin() + 1, [](double a, double b) { return std::max(a, b); });
     std::inclusive_scan(
       fdps_v.rbegin(), fdps_v.rend(), fdsmin_v.rbegin() + 1, [](double a, double b) { return std::min(a, b); });
-    fdsmin_v.back() = std::numeric_limits<double>::infinity();
+    fdsmin_v.back() = std::numeric_limits<double>::max();
   } else {
     fdps_v[0].v.fill(0.0);
     sdps_v[0].v.fill(0.0);
@@ -111,7 +101,7 @@ void DIM<T>::inclusive_scan()
       simde_mm512_store_pd(fdps_v[i].v.data(), fdps_acc);
       simde_mm512_store_pd(sdps_v[i].v.data(), sdps_acc);
     }
-    fdpmax_v[0].v.fill(-std::numeric_limits<double>::infinity());
+    fdpmax_v[0].v.fill(-std::numeric_limits<double>::max());
     simde__m512d fdpmax_acc = simde_mm512_load_pd(fdpmax_v[0].v.data());
     for (uint64_t i = 0; i < s; ++i) {
       const simde__m512d fdps = simde_mm512_load_pd(fdps_v[i].v.data());
@@ -119,7 +109,7 @@ void DIM<T>::inclusive_scan()
       simde_mm512_store_pd(fdpmax_v[i + 1].v.data(), fdpmax_acc);
     }
     uint64_t j = s;
-    fdsmin_v[j].v.fill(std::numeric_limits<double>::infinity());
+    fdsmin_v[j].v.fill(std::numeric_limits<double>::max());
     simde__m512d fdsmin_acc = simde_mm512_load_pd(fdsmin_v[j].v.data());
     for (uint64_t i = 0; i < s; ++i) {
       j = s - i - 1;
@@ -134,13 +124,15 @@ template<typename T>
 void DIM<T>::extract_intervals(const uint64_t tau, const size_t idx)
 {
   for (uint64_t a = 1, b = 1; a <= en_mers; ++a) {
-    if (at(fdpmax_v[a - 1], idx) >= at(fdps_v[a], idx)) {
+    const double fdpmax_a = at(fdpmax_v[a - 1], idx);
+    const double fdps_a = at(fdps_v[a], idx);
+    if (fdpmax_a >= fdps_a) {
       continue;
     }
     if (b < (a + tau)) {
       b = a + tau - 1;
     }
-    if (b > en_mers) {
+    if (__builtin_expect(b > en_mers, 0)) {
       break;
     }
     if (at(fdsmin_v[b + 1], idx) >= at(fdps_v[a], idx)) {
@@ -148,9 +140,10 @@ void DIM<T>::extract_intervals(const uint64_t tau, const size_t idx)
     }
     b++;
     while (b <= en_mers) {
-      const bool negative_sum = at(fdps_v[b], idx) < at(fdps_v[a], idx);
-      const bool left_maximal = at(fdpmax_v[a - 1], idx) <= at(fdps_v[b], idx);
-      const bool right_maximal = at(fdps_v[a], idx) <= at(fdsmin_v[b + 1], idx);
+      const double fdps_b = at(fdps_v[b], idx);
+      const bool negative_sum = fdps_b < fdps_a;
+      const bool left_maximal = fdpmax_a <= fdps_b;
+      const bool right_maximal = fdps_a <= at(fdsmin_v[b + 1], idx);
       if (negative_sum && left_maximal && right_maximal) {
         rintervals_v[idx].emplace_back(a, b);
         break;
@@ -262,6 +255,7 @@ void QIE<T>::map_sequences(std::ostream& output_stream)
       dim.expand_intervals(chisq);
       dim.report_intervals(batch_stream, identifer_batch[bix]);
     } else {
+      // TODO: Do not do this twice?
       dim_or.inclusive_scan();
       dim_rc.inclusive_scan();
       for (size_t i = 0; i < WIDTH; ++i) {
@@ -284,7 +278,7 @@ void QIE<T>::search_mers(const char* cseq, uint64_t len, DIM<T>& dim_or, DIM<T>&
   uint32_t orrix, rcrix;
   uint64_t orenc64_bp, orenc64_lr, rcenc64_bp;
   for (; i < len; ++i) {
-    if (SEQ_NT4_TABLE[cseq[i]] >= 4) {
+    if (__builtin_expect(SEQ_NT4_TABLE[cseq[i]] >= 4, 0)) {
       l = 0;
       continue;
     }
@@ -305,22 +299,22 @@ void QIE<T>::search_mers(const char* cseq, uint64_t len, DIM<T>& dim_or, DIM<T>&
 #ifdef CANONICAL
     if (rcenc64_bp < orenc64_bp) {
       orrix = lshf->compute_hash(orenc64_bp);
-      if (sketch->check_partial(orrix)) {
+      if (__builtin_expect(sketch->check_partial(orrix), 1)) {
         dim_or.aggregate_mer(sketch, orrix, lshf->drop_ppos_lr(orenc64_lr), j);
       }
     } else {
       rcrix = lshf->compute_hash(rcenc64_bp);
-      if (sketch->check_partial(rcrix)) {
+      if (__builtin_expect(sketch->check_partial(rcrix), 1)) {
         dim_rc.aggregate_mer(sketch, rcrix, lshf->drop_ppos_lr(bp64_to_lr64(rcenc64_bp)), j);
       }
     }
 #else
     orrix = lshf->compute_hash(orenc64_bp);
-    if (sketch->check_partial(orrix)) {
+    if (__builtin_expect(sketch->check_partial(orrix), 1)) {
       dim_or.aggregate_mer(sketch, orrix, lshf->drop_ppos_lr(orenc64_lr), j);
     }
     rcrix = lshf->compute_hash(rcenc64_bp);
-    if (sketch->check_partial(rcrix)) {
+    if (__builtin_expect(sketch->check_partial(rcrix), 1)) {
       dim_rc.aggregate_mer(sketch, rcrix, lshf->drop_ppos_lr(bp64_to_lr64(rcenc64_bp)), j);
     }
 #endif /* CANONICAL */
