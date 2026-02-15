@@ -35,27 +35,32 @@ static:
 # Check for -lcurl
 CURL_SUPPORTED := $(shell echo 'int main() { return 0; }' | $(COMPILER) -lcurl -x c++ -o /dev/null - 2>/dev/null && echo yes || echo no)
 
+OS := $(shell uname -s)
+
 $(info ===== Build mode: $(mode) =====)
 ifeq ($(mode),dynamic)
 	LDLIBS = -lm -lz
 else ifeq ($(mode),static)
-	LDLIBS = --static -static-libgcc -static-libstdc++ -lm -lz
+	LDLIBS = -lm -lz
+	ifneq ($(OS),Darwin)
+		LDLIBS += --static -static-libgcc
+	endif
+	LDLIBS += -static-libstdc++ 
 	CURL_SUPPORTED = no
 else
 	LDLIBS = -lm -lz
 endif
 
-OS := $(shell uname -s)
 ifneq ($(OS),Darwin)
 	LDLIBS += -lstdc++ -lstdc++fs
 endif
 
 L_CURL = 0
 ifneq ($(CURL_SUPPORTED),no)
-  ifneq ($(mode),static)
-	  LDLIBS += -lcurl
-	  L_CURL = 1
-  endif
+	ifneq ($(mode),static)
+		LDLIBS += -lcurl
+		L_CURL = 1
+	endif
 endif
 
 VARDEF= -D _L_CURL=$(L_CURL)
