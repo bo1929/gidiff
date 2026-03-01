@@ -2,18 +2,17 @@
 #--------------------------------------------
 COMPILER ?= g++
 mode ?= dynamic  # Default to dynamic linking
+mdebug ?= no
 
-# TODO: remove -g
-CXXFLAGS += -g -std=c++17 -O3 \
+CXXFLAGS = -std=c++17 -O3 \
 						-fopenmp-simd \
 						-funroll-loops \
 						-ftree-vectorize \
-						-flto
+						-flto # \
 						# -fno-trapping-math \
 						# -ffast-math
-# Keep it fun?
-# -Wall
-WFLAGS += -Wno-unused-result -Wno-unused-command-line-argument -Wno-unknown-pragmas -Wno-undefined-inline
+
+WFLAGS += -Wno-unused-result -Wno-unused-command-line-argument -Wno-undefined-inline
 
 INC = -I simde
 
@@ -28,7 +27,7 @@ OBJECTS =	build/random.o build/enc.o \
 
 # rules
 #--------------------------------------------
-.PHONY: all dynamic static clean
+.PHONY: all dynamic static debug clean
 
 all:
 	$(MAKE) mode=dynamic $(PROGRAM)
@@ -38,6 +37,9 @@ dynamic:
 
 static:
 	$(MAKE) mode=static $(PROGRAM)
+
+debug:
+	$(MAKE) mode=dynamic mdebug=yes $(PROGRAM)
 
 # Check for -lcurl
 CURL_SUPPORTED := $(shell echo 'int main() { return 0; }' | $(COMPILER) -lcurl -x c++ -o /dev/null - 2>/dev/null && echo yes || echo no)
@@ -62,15 +64,18 @@ ifneq ($(OS),Darwin)
 	LDLIBS += -lstdc++ -lstdc++fs
 endif
 
-L_CURL = 0
+ifeq ($(mdebug),yes)
+	CXXFLAGS += -g -ggdb3 -fno-omit-frame-pointer -fsanitize=address
+endif
+
+LCURL = 0
 ifneq ($(CURL_SUPPORTED),no)
 	ifneq ($(mode),static)
 		LDLIBS += -lcurl
-		L_CURL = 1
+		LCURL = 1
 	endif
 endif
-
-VARDEF= -D _L_CURL=$(L_CURL)
+VARDEF= -D _LCURL=$(LCURL)
 
 ARCH := $(shell uname -m)
 # Check for -mbmi2

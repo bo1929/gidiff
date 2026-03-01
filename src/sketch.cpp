@@ -5,7 +5,6 @@ Sketch::Sketch(std::filesystem::path sketch_path)
 {
 }
 
-
 void Sketch::write_header(std::ofstream& stream)
 {
   uint64_t refid_len = refid.length();
@@ -33,13 +32,13 @@ void Sketch::load_from_offset(std::ifstream& stream, uint64_t offset)
   if (offset > 0) {
     stream.seekg(offset);
   }
-  
+
   uint64_t refid_len;
   stream.read(reinterpret_cast<char*>(&refid_len), sizeof(uint64_t));
   refid.resize(refid_len);
   stream.read(&refid[0], refid_len);
   stream.read(reinterpret_cast<char*>(&timestamp), sizeof(uint64_t));
-  
+
   stream.read(reinterpret_cast<char*>(&k), sizeof(uint8_t));
   stream.read(reinterpret_cast<char*>(&w), sizeof(uint8_t));
   stream.read(reinterpret_cast<char*>(&h), sizeof(uint8_t));
@@ -47,15 +46,15 @@ void Sketch::load_from_offset(std::ifstream& stream, uint64_t offset)
   stream.read(reinterpret_cast<char*>(&r), sizeof(uint32_t));
   stream.read(reinterpret_cast<char*>(&frac), sizeof(bool));
   stream.read(reinterpret_cast<char*>(&nrows), sizeof(uint32_t));
-  
+
   vec<uint8_t> ppos_v(h), npos_v(k - h);
   stream.read(reinterpret_cast<char*>(ppos_v.data()), h * sizeof(uint8_t));
   stream.read(reinterpret_cast<char*>(npos_v.data()), (k - h) * sizeof(uint8_t));
 
   lshf = std::make_shared<LSHF>(m, ppos_v, npos_v);
-  
+
   stream.read(reinterpret_cast<char*>(&rho), sizeof(double));
-  
+
   sfhm = std::make_shared<SFHM>();
   sfhm->load(stream);
 

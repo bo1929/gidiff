@@ -1,12 +1,12 @@
 #ifndef _RQSEQ_HPP
 #define _RQSEQ_HPP
 
-#include <regex>
 #include <zlib.h>
 #include <filesystem>
-#if defined(_L_CURL) && _L_CURL == 1
+#if defined(_LCURL) && _LCURL == 1
   #include <curl/curl.h>
 #endif
+#include "common.hpp"
 #include "msg.hpp"
 #include "types.hpp"
 #include "lshf.hpp"
@@ -21,9 +21,7 @@
 class HandlerURL
 {
 protected:
-  const std::regex url_regexp = std::regex(
-    R"(^(?:(?:https?|ftp)://)(?:\S+@)?(?:(?!10(?:\.\d{1,3}){3})(?!127(?:\.\d{1,3}){3})(?!169\.254(?:\.\d{1,3}){2})(?!192\.168(?:\.\d{1,3}){2})(?!172\.(?:1[6-9]|2\d|3[0-1])(?:\.\d{1,3}){2})(?:[1-9]\d?|1\d\d|2[01]\d|22[0-3])(?:\.(?:1?\d{1,2}|2[0-4]\d|25[0-5])){2}(?:\.(?:[1-9]\d?|1\d\d|2[0-4]\d|25[0-4]))|(?:[a-z\u00a1-\uffff0-9]+-)*[a-z\u00a1-\uffff0-9]+(?:\.(?:[a-z\u00a1-\uffff0-9]+-)*[a-z\u00a1-\uffff0-9]+)*(?:\.(?:[a-z\u00a1-\uffff]{2,})))(?::\d{2,5})?(?:/\S*)?$)");
-#if defined _L_CURL && _L_CURL == 1
+#if defined(_LCURL) && _LCURL == 1
   static size_t write_data(void* ptr, size_t s, size_t nmb, FILE* fst)
   {
     size_t written = fwrite(ptr, s, nmb, fst);

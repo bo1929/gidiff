@@ -16,9 +16,9 @@ RSeq::RSeq(str input, lshf_sptr_t lshf, uint8_t w, uint32_t r, bool frac)
   mask_bp = u64m >> ((32 - k) * 2);
   mask_lr = ((u64m >> (64 - k)) << 32) + ((u64m << 32) >> (64 - k));
 
-  is_url = std::regex_match(input, url_regexp);
+  is_url = std::regex_match(input, urlexp);
   if (is_url) {
-#if defined _WLCURL && _WLCURL == 1
+#if defined(_LCURL) && _LCURL == 1
     input_path = download_url(input);
 #else
     warn_msg("Failed to download from URL, compiled without libcurl!");
@@ -149,9 +149,9 @@ void RSeq::extract_mers(vvec<T>& table)
 
 QSeq::QSeq(str input)
 {
-  is_url = std::regex_match(input, url_regexp);
+  is_url = std::regex_match(input, urlexp);
   if (is_url) {
-#if defined _WLCURL && _WLCURL == 1
+#if defined(_LCURL) && _LCURL == 1
     input_path = download_url(input);
 #else
     warn_msg("Failed to download from URL, compiled without libcurl!");

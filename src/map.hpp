@@ -60,8 +60,7 @@ class QIE
   static constexpr size_t WIDTH = std::is_same_v<T, double> ? 1 : RWIDTH;
 
 public:
-  QIE(sketch_sptr_t sketch, lshf_sptr_t lshf, const vec<str>& seq_batch, 
-      const vec<str>& qid_batch, params_t<T> params);
+  QIE(sketch_sptr_t sketch, lshf_sptr_t lshf, const vec<str>& seq_batch, const vec<str>& qid_batch, params_t<T> params);
   void map_sequences(std::ostream& output_stream);
 
 private:
@@ -84,7 +83,7 @@ private:
   uint64_t enmers;
   uint64_t bix;
   llh_sptr_t<T> llhf;
-  
+
   const vec<str>& seq_batch;
   const vec<str>& qid_batch;
 };

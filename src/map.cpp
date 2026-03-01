@@ -235,8 +235,7 @@ interval_t DIM<T>::get_interval(uint64_t i, size_t idx)
 }
 
 template<typename T>
-QIE<T>::QIE(sketch_sptr_t sketch, lshf_sptr_t lshf, const vec<str>& seq_batch, 
-            const vec<str>& qid_batch, params_t<T> params)
+QIE<T>::QIE(sketch_sptr_t sketch, lshf_sptr_t lshf, const vec<str>& seq_batch, const vec<str>& qid_batch, params_t<T> params)
   : sketch(sketch)
   , lshf(lshf)
   , k(lshf->get_k())
@@ -264,7 +263,11 @@ void QIE<T>::map_sequences(std::ostream& output_stream)
     const char* cseq = seq_batch[bix].data();
     const uint64_t len = seq_batch[bix].size();
     onmers = 0;
-    enmers = len - k + 1;
+    if (len < (len - k + 1)) {
+      // TODO: too short? do something?
+      continue;
+    }
+    en_mers = len - k + 1;
 
     DIM<T> dim_or(llhf, params.hdist_th, enmers);
     DIM<T> dim_rc(llhf, params.hdist_th, enmers);
@@ -351,11 +354,11 @@ void QIE<T>::report_intervals(std::ostream& output_stream, DIM<T>& dim, size_t i
   interval_t x;
   uint64_t i = 0;
   x = dim.get_interval(i, idx);
-  if (x.first == enmers) {
-    output_stream << WRITE_CINTERVAL(qid_batch[bix], n, n, n, dist_th) << '\n';
-  }
-  while (x.first < enmers) {
-    output_stream << WRITE_CINTERVAL(qid_batch[bix], x.first, x.second + k - 1, n, dist_th) << '\n';
+  /* if (x.first == en_mers) { */
+  /*   output_stream << WRITE_CINTERVAL(identifier_batch[bix], n, n, n, dist_th) << '\n'; */
+  /* } */
+  while (x.first < en_mers) {
+    output_stream << WRITE_CINTERVAL(identifier_batch[bix], x.first, x.second + k - 1, n, dist_th) << '\n';
     x = dim.get_interval(++i, idx);
   }
 }

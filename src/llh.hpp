@@ -21,10 +21,10 @@ public:
     const uint32_t nh = k - h;
 
     binom_coef_k[0] = 1;
-    binom_coef_hnk[0] = 0;
     for (uint32_t d = 0; d < k; ++d) {
       binom_coef_k[d + 1] = (binom_coef_k[d] * (k - d)) / (d + 1);
     }
+    binom_coef_hnk[0] = 0;
     uint64_t vc = 1;
     for (uint32_t d = 1; d <= hdist_th; ++d) {
       vc = (vc * (nh - d + 1)) / d;
@@ -167,24 +167,28 @@ private:
   double compute_fdc_u(const double D) const
   {
     const double S = 1.0 - D;
-    double vnp = 0;
-    double vdp = 0;
+    double gd = 0;
+    double fd = 0;
     for (uint32_t d = 0; d <= k; ++d) {
       const double pd = (d - k * D) / (D * S);
       const double pe = std::pow(S, k - d) * std::pow(D, d);
-      const double pc = (d > hdist_th) ? 1.0 : (binom_coef_hnk[d] / static_cast<double>(binom_coef_k[d]));
-      const double wt = binom_coef_k[d] * pe * pc;
-      vnp += wt * pd;
-      vdp += wt;
+      double wt = pe;
+      if (d <= hdist_th) {
+        wt *= binom_coef_hnk[d];
+      } else {
+        wt *= binom_coef_k[d];
+      }
+      gd += wt * pd;
+      fd += wt;
     }
-    return rho * vnp / (1.0 - rho + rho * vdp);
+    return rho * gd / (1.0 - rho + rho * fd);
   }
 
   double compute_sdc_u(const double D) const
   {
     const double S = 1.0 - D;
-    double ggd = 0;
-    double ffd = 0;
+    double gd = 0;
+    double fd = 0;
     double fpd = 0;
     double gpd = 0;
     const double D_sq = D * D;
@@ -194,18 +198,22 @@ private:
       const double pd = (d - k * D) / (D * S);
       const double pe = std::pow(S, k - d) * std::pow(D, d);
       const double vy = (d * d + (k - 1) * k * D_sq - d * (1 + (k - 1) * 2 * D)) / denom;
-      const double wt = binom_coef_k[d] * pe * (d > hdist_th) +
-                        binom_coef_k[d] * (d <= hdist_th) * ((pe * binom_coef_hnk[d]) / binom_coef_k[d]);
-      ggd += wt * pd;
-      ffd += wt;
+      double wt = pe;
+      if (d <= hdist_th) {
+        wt *= binom_coef_hnk[d];
+      } else {
+        wt *= binom_coef_k[d];
+      }
+      gd += wt * pd;
+      fd += wt;
       fpd += wt * pd;
       gpd += wt * vy;
     }
-    ggd *= rho;
+    gd *= rho;
     fpd *= rho;
     gpd *= rho;
-    const double fd = 1.0 - rho + rho * ffd;
-    return (fd * gpd - ggd * fpd) / (fd * fd);
+    fd = 1.0 - rho + rho * fd;
+    return (fd * gpd - gd * fpd) / (fd * fd);
   }
 
   uint64_t* v = nullptr;
