@@ -50,6 +50,7 @@ template<typename T>
 using llh_sptr_t = std::shared_ptr<LLH<T>>;
 
 using cm512_t = std::array<double, RWIDTH>;
+
 struct hmer_t
 {
   uint64_t x, y, z;

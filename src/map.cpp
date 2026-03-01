@@ -263,6 +263,10 @@ void QIE<T>::map_sequences(std::ostream& output_stream)
     const char* cseq = seq_batch[bix].data();
     const uint64_t len = seq_batch[bix].size();
     onmers = 0;
+    if (len < (len - k + 1)) {
+      // TODO: too short? do something?
+      continue;
+    }
     en_mers = len - k + 1;
 
     DIM<T> dim_or(llhf, params.hdist_th, en_mers);
@@ -350,9 +354,9 @@ void QIE<T>::report_intervals(std::ostream& output_stream, DIM<T>& dim, size_t i
   interval_t x;
   uint64_t i = 0;
   x = dim.get_interval(i, idx);
-  if (x.first == en_mers) {
-    output_stream << WRITE_CINTERVAL(identifier_batch[bix], n, n, n, dist_th) << '\n';
-  }
+  /* if (x.first == en_mers) { */
+  /*   output_stream << WRITE_CINTERVAL(identifier_batch[bix], n, n, n, dist_th) << '\n'; */
+  /* } */
   while (x.first < en_mers) {
     output_stream << WRITE_CINTERVAL(identifier_batch[bix], x.first, x.second + k - 1, n, dist_th) << '\n';
     x = dim.get_interval(++i, idx);
