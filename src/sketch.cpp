@@ -5,26 +5,61 @@ Sketch::Sketch(std::filesystem::path sketch_path)
 {
 }
 
-void Sketch::load_full_sketch()
+
+void Sketch::write_header(std::ofstream& stream)
 {
-  std::ifstream sketch_stream(sketch_path, std::ifstream::binary);
-  sfhm = std::make_shared<SFHM>();
-  sfhm->load(sketch_stream);
-  sketch_stream.read(reinterpret_cast<char*>(&k), sizeof(uint8_t));
-  sketch_stream.read(reinterpret_cast<char*>(&w), sizeof(uint8_t));
-  sketch_stream.read(reinterpret_cast<char*>(&h), sizeof(uint8_t));
-  sketch_stream.read(reinterpret_cast<char*>(&m), sizeof(uint32_t));
-  sketch_stream.read(reinterpret_cast<char*>(&r), sizeof(uint32_t));
-  sketch_stream.read(reinterpret_cast<char*>(&frac), sizeof(bool));
-  sketch_stream.read(reinterpret_cast<char*>(&nrows), sizeof(uint32_t));
+  uint64_t refid_len = refid.length();
+  stream.write(reinterpret_cast<char*>(&refid_len), sizeof(uint64_t));
+  stream.write(refid.c_str(), refid_len);
+  stream.write(reinterpret_cast<char*>(&timestamp), sizeof(uint64_t));
+}
+
+void Sketch::write_config(std::ofstream& stream)
+{
+  stream.write(reinterpret_cast<char*>(&k), sizeof(uint8_t));
+  stream.write(reinterpret_cast<char*>(&w), sizeof(uint8_t));
+  stream.write(reinterpret_cast<char*>(&h), sizeof(uint8_t));
+  stream.write(reinterpret_cast<char*>(&m), sizeof(uint32_t));
+  stream.write(reinterpret_cast<char*>(&r), sizeof(uint32_t));
+  stream.write(reinterpret_cast<char*>(&frac), sizeof(bool));
+  stream.write(reinterpret_cast<char*>(&nrows), sizeof(uint32_t));
+  stream.write(reinterpret_cast<char*>(lshf->ppos_data()), h * sizeof(uint8_t));
+  stream.write(reinterpret_cast<char*>(lshf->npos_data()), (k - h) * sizeof(uint8_t));
+  stream.write(reinterpret_cast<char*>(&rho), sizeof(double));
+}
+
+void Sketch::load_from_offset(std::ifstream& stream, uint64_t offset)
+{
+  if (offset > 0) {
+    stream.seekg(offset);
+  }
+  
+  uint64_t refid_len;
+  stream.read(reinterpret_cast<char*>(&refid_len), sizeof(uint64_t));
+  refid.resize(refid_len);
+  stream.read(&refid[0], refid_len);
+  stream.read(reinterpret_cast<char*>(&timestamp), sizeof(uint64_t));
+  
+  stream.read(reinterpret_cast<char*>(&k), sizeof(uint8_t));
+  stream.read(reinterpret_cast<char*>(&w), sizeof(uint8_t));
+  stream.read(reinterpret_cast<char*>(&h), sizeof(uint8_t));
+  stream.read(reinterpret_cast<char*>(&m), sizeof(uint32_t));
+  stream.read(reinterpret_cast<char*>(&r), sizeof(uint32_t));
+  stream.read(reinterpret_cast<char*>(&frac), sizeof(bool));
+  stream.read(reinterpret_cast<char*>(&nrows), sizeof(uint32_t));
+  
   vec<uint8_t> ppos_v(h), npos_v(k - h);
-  sketch_stream.read(reinterpret_cast<char*>(ppos_v.data()), ppos_v.size() * sizeof(uint8_t));
-  sketch_stream.read(reinterpret_cast<char*>(npos_v.data()), npos_v.size() * sizeof(uint8_t));
-  sketch_stream.read(reinterpret_cast<char*>(&rho), sizeof(double));
-  check_fstream(sketch_stream, "Failed to read the sketch file!", sketch_path);
-  sketch_stream.close();
+  stream.read(reinterpret_cast<char*>(ppos_v.data()), h * sizeof(uint8_t));
+  stream.read(reinterpret_cast<char*>(npos_v.data()), (k - h) * sizeof(uint8_t));
 
   lshf = std::make_shared<LSHF>(m, ppos_v, npos_v);
+  
+  stream.read(reinterpret_cast<char*>(&rho), sizeof(double));
+  
+  sfhm = std::make_shared<SFHM>();
+  sfhm->load(stream);
+
+  // check_fstream(stream, "Failed to read the sketch file!", sketch_path);
 }
 
 void Sketch::make_rho_partial()

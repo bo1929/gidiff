@@ -4,6 +4,7 @@
 #include <regex>
 #include <chrono>
 #include <ctime>
+#include "msg.hpp"
 #include "types.hpp"
 #include "lshf.hpp"
 #include "rqseq.hpp"
@@ -17,9 +18,9 @@
 #define STRSTREAM_PRECISION 4
 
 extern uint32_t num_threads;
-extern std::string invocation;
+extern str invocation;
 
-static std::string vec_to_str(const std::vector<uint8_t>& v)
+static str vec_to_str(const std::vector<uint8_t>& v)
 {
   std::ostringstream oss;
   oss << "[";
@@ -32,11 +33,11 @@ static std::string vec_to_str(const std::vector<uint8_t>& v)
 }
 
 const auto url_validator = CLI::Validator(
-  [](std::string& input) {
+  [](str& input) {
     const std::regex url_regexp = std::regex(
       R"(^(?:(?:https?|ftp)://)(?:\S+@)?(?:(?!10(?:\.\d{1,3}){3})(?!127(?:\.\d{1,3}){3})(?!169\.254(?:\.\d{1,3}){2})(?!192\.168(?:\.\d{1,3}){2})(?!172\.(?:1[6-9]|2\d|3[0-1])(?:\.\d{1,3}){2})(?:[1-9]\d?|1\d\d|2[01]\d|22[0-3])(?:\.(?:1?\d{1,2}|2[0-4]\d|25[0-5])){2}(?:\.(?:[1-9]\d?|1\d\d|2[0-4]\d|25[0-4]))|(?:[a-z\u00a1-\uffff0-9]+-)*[a-z\u00a1-\uffff0-9]+(?:\.(?:[a-z\u00a1-\uffff0-9]+-)*[a-z\u00a1-\uffff0-9]+)*(?:\.(?:[a-z\u00a1-\uffff]{2,})))(?::\d{2,5})?(?:/\S*)?$)");
     if (std::regex_match(input, url_regexp)) {
-      return std::string("");
+      return str("");
     } else {
       return "Given URL is not valid: " + input;
     }
@@ -50,7 +51,6 @@ public:
   void set_lshf();
   void set_nrows();
   bool validate_configuration();
-  void save_configuration(std::ofstream& cfg_stream);
   void set_sketch_defaults()
   {
     k = 27;
@@ -77,33 +77,32 @@ protected:
   lshf_sptr_t lshf = nullptr;
 };
 
-class SketchTarget : public BaseLSH
+class SketchSC : public BaseLSH
 {
 public:
-  SketchTarget(CLI::App& sc);
-  void create_sketch();
-  void save_sketch();
+  SketchSC(CLI::App& sc);
+  void create();
+  void save();
 
 private:
   double rho;
-  std::string input;
+  str input_path;
   std::filesystem::path sketch_path;
   sfhm_sptr_t sketch_sfhm = nullptr;
+  sketch_sptr_t sketch = nullptr;
 };
 
-class MapSketch
+class MapSC
 {
 public:
-  MapSketch(CLI::App& sc);
-  void load_sketch();
-  void map_sequences();
+  MapSC(CLI::App& sc);
+  void map();
   void header_dreport(strstream& dreport_stream);
   uint32_t get_total_qseq() { return total_qseq; }
 
 private:
-  sketch_sptr_t sketch = nullptr;
+  str query_path;
   std::filesystem::path sketch_path;
-  std::string query;
   std::filesystem::path output_path;
   std::ofstream output_file;
   std::ostream* output_stream = &std::cout;
@@ -112,6 +111,17 @@ private:
   uint64_t min_length = 0;
   double chisq = 3.841; // 95%
   std::vector<double> dist_th;
+};
+
+class MergeSC
+{
+public:
+  MergeSC(CLI::App& sc);
+  void merge();
+
+private:
+  std::filesystem::path output_path;
+  std::vector<str> sketch_paths;
 };
 
 #endif

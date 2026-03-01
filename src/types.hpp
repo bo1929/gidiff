@@ -28,6 +28,7 @@ class Sketch;
 
 typedef uint64_t inc_t;
 typedef uint32_t enc_t;
+typedef std::string str;
 typedef std::stringstream strstream;
 typedef std::pair<uint64_t, uint64_t> interval_t;
 typedef std::shared_ptr<RSeq> rseq_sptr_t;

@@ -17,7 +17,7 @@ class DIM
   static constexpr size_t WIDTH = std::is_same_v<T, double> ? 1 : RWIDTH;
 
 public:
-  DIM(llh_sptr_t<T> llhf, uint32_t hdist_th, uint64_t en_mers);
+  DIM(llh_sptr_t<T> llhf, uint32_t hdist_th, uint64_t enmers);
   T get_fdt() const { return fdt; }
   T get_sdt() const { return sdt; }
   static inline double at(T v, size_t idx);
@@ -33,7 +33,7 @@ public:
 
 private:
   const llh_sptr_t<T> llhf;
-  const uint64_t en_mers;
+  const uint64_t enmers;
   const uint32_t hdist_th;
   uint64_t merhit_count = 0;
   uint64_t merna_count = 0;
@@ -60,7 +60,8 @@ class QIE
   static constexpr size_t WIDTH = std::is_same_v<T, double> ? 1 : RWIDTH;
 
 public:
-  QIE(sketch_sptr_t sketch, lshf_sptr_t lshf, qseq_sptr_t qs, params_t<T> params);
+  QIE(sketch_sptr_t sketch, lshf_sptr_t lshf, const vec<str>& seq_batch, 
+      const vec<str>& qid_batch, params_t<T> params);
   void map_sequences(std::ostream& output_stream);
 
 private:
@@ -80,11 +81,12 @@ private:
   uint64_t mask_bp;
   uint64_t mask_lr;
   uint64_t onmers;
-  uint64_t en_mers;
+  uint64_t enmers;
   uint64_t bix;
   llh_sptr_t<T> llhf;
-  vec<std::string> seq_batch;
-  vec<std::string> identifier_batch;
+  
+  const vec<str>& seq_batch;
+  const vec<str>& qid_batch;
 };
 
 #define WRITE_CINTERVAL(identifier, a, b, n, dist_th) identifier << '\t' << a << '\t' << b << '\t' << n << '\t' << dist_th

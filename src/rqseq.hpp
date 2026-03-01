@@ -16,8 +16,7 @@
 #include "hyperloglog.hpp"
 
 /* #define CANONICAL */
-#define RBATCH_SIZE 1024
-#define DSEQ_LEN 150
+#define RBATCH_SIZE 512
 
 class HandlerURL
 {
@@ -31,19 +30,19 @@ protected:
     return written;
   }
 
-  std::string download_url(std::string url)
+  str download_url(str url)
   {
     std::filesystem::path tmp_dir = std::filesystem::temp_directory_path();
     if (!std::filesystem::exists(tmp_dir) || !std::filesystem::is_directory(tmp_dir)) {
-      error_exit(std::string("Failed to get temp directory: ") + tmp_dir.string());
+      error_exit(str("Failed to get temp directory: ") + tmp_dir.string());
     }
-    std::string hash_str = std::to_string(ghhp(url));
-    std::string tmp_filename = "rseq_" + hash_str + ".tmp";
+    str hash_str = std::to_string(ghhp(url));
+    str tmp_filename = "rseq_" + hash_str + ".tmp";
     std::filesystem::path tmp_path = tmp_dir / tmp_filename;
 
     FILE* fp = fopen(tmp_path.string().c_str(), "wb");
     if (!fp) {
-      error_exit(std::string("Failed to open temp file for writing: ") + tmp_path.string());
+      error_exit(str("Failed to open temp file for writing: ") + tmp_path.string());
     }
     CURL* curl = curl_easy_init();
     if (!curl) {
@@ -55,7 +54,7 @@ protected:
     CURLcode resb = curl_easy_perform(curl);
     curl_easy_cleanup(curl);
     if (resb != CURLE_OK) {
-      error_exit(std::string("CURL download failed: ") + curl_easy_strerror(resb));
+      error_exit(str("CURL download failed: ") + curl_easy_strerror(resb));
     }
     fclose(fp);
 
@@ -74,7 +73,7 @@ KSEQ_INIT(gzFile, gzread)
 class RSeq : public HandlerURL
 {
 public:
-  RSeq(std::string input, lshf_sptr_t lshf, uint8_t w, uint32_t r, bool frac);
+  RSeq(str input, lshf_sptr_t lshf, uint8_t w, uint32_t r, bool frac);
   ~RSeq();
   bool set_curr_seq();
   bool read_next_seq();
@@ -112,20 +111,19 @@ class QSeq : public HandlerURL
   friend class QIE<cm512_t>;
 
 public:
-  QSeq(std::string input);
+  QSeq(str input);
   ~QSeq();
   bool read_next_batch();
-  void clear_curr_batch();
-  bool is_batch_finished();
-  uint64_t get_cbatch_size();
+  void clear();
+  bool is_empty();
+  uint64_t get_cbatch();
 
 private:
   gzFile gfile;
   kseq_t* kseq;
   bool is_url;
-  vec<std::string> seq_batch;
-  vec<std::string> identifier_batch;
-  uint64_t bpc_limit = RBATCH_SIZE * DSEQ_LEN;
+  vec<str> seq_batch;
+  vec<str> qid_batch;
   uint64_t rbatch_size = RBATCH_SIZE;
   uint64_t cbatch_size = 0;
   std::filesystem::path input_path;

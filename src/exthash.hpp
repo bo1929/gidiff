@@ -8,7 +8,7 @@
 constexpr uint32_t MURMUR_SEED_0 = 0x5bd1e995;
 constexpr uint32_t MURMUR_SEED_1 = 0x1b873593;
 
-inline uint32_t ghhp(const std::string& str)
+inline uint32_t ghhp(const str& str)
 {
   uint32_t b = 378551;
   uint32_t a = 63689;

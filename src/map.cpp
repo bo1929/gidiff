@@ -1,21 +1,21 @@
 #include "map.hpp"
 
 template<typename T>
-DIM<T>::DIM(llh_sptr_t<T> llhf, uint32_t hdist_th, uint64_t en_mers)
+DIM<T>::DIM(llh_sptr_t<T> llhf, uint32_t hdist_th, uint64_t enmers)
   : llhf(llhf)
   , hdist_th(hdist_th)
-  , en_mers(en_mers)
+  , enmers(enmers)
 {
   hdisthist_v.resize(hdist_th + 1, 0);
 
-  // fdc_v.reserve(en_mers);
-  // sdc_v.reserve(en_mers);
-  fdc_v.resize(en_mers);
-  sdc_v.resize(en_mers);
-  fdps_v.reserve(en_mers + 1);
-  sdps_v.reserve(en_mers + 1);
-  fdpmax_v.reserve(en_mers + 2);
-  fdsmin_v.reserve(en_mers + 2);
+  // fdc_v.reserve(enmers);
+  // sdc_v.reserve(enmers);
+  fdc_v.resize(enmers);
+  sdc_v.resize(enmers);
+  fdps_v.reserve(enmers + 1);
+  sdps_v.reserve(enmers + 1);
+  fdpmax_v.reserve(enmers + 2);
+  fdsmin_v.reserve(enmers + 2);
 
   if constexpr (std::is_same_v<T, double>) {
     fdt = 0.0;
@@ -81,8 +81,8 @@ void DIM<T>::aggregate_mer(sketch_sptr_t sketch, uint32_t rix, enc_t enc_lr, uin
 template<typename T>
 void DIM<T>::inclusive_scan()
 {
-  assert(en_mers > 0);
-  const uint64_t s = en_mers + 1;
+  assert(enmers > 0);
+  const uint64_t s = enmers + 1;
 
   fdps_v.resize(s);
   sdps_v.resize(s);
@@ -142,7 +142,7 @@ void DIM<T>::inclusive_scan()
 template<typename T>
 void DIM<T>::extract_intervals(const uint64_t tau, const size_t idx)
 {
-  for (uint64_t a = 1, b = 1; a <= en_mers; ++a) {
+  for (uint64_t a = 1, b = 1; a <= enmers; ++a) {
     const double fdpmax_a = at(fdpmax_v[a - 1], idx);
     const double fdps_a = at(fdps_v[a], idx);
 
@@ -153,7 +153,7 @@ void DIM<T>::extract_intervals(const uint64_t tau, const size_t idx)
     if (b < (a + tau)) {
       b = a + tau - 1;
     }
-    if (__builtin_expect(b > en_mers, 0)) {
+    if (__builtin_expect(b > enmers, 0)) {
       break;
     }
 
@@ -162,7 +162,7 @@ void DIM<T>::extract_intervals(const uint64_t tau, const size_t idx)
     }
 
     b++;
-    while (b <= en_mers) {
+    while (b <= enmers) {
       const double fdps_b = at(fdps_v[b], idx);
       const bool negative_sum = fdps_b < fdps_a;
       const bool left_maximal = fdpmax_a <= fdps_b;
@@ -230,24 +230,25 @@ interval_t DIM<T>::get_interval(uint64_t i, size_t idx)
   if ((idx < eintervals_v.size()) && (i < eintervals_v[idx].size())) {
     return eintervals_v[idx][i];
   } else {
-    return {en_mers, en_mers};
+    return {enmers, enmers};
   }
 }
 
 template<typename T>
-QIE<T>::QIE(sketch_sptr_t sketch, lshf_sptr_t lshf, qseq_sptr_t qs, params_t<T> params)
+QIE<T>::QIE(sketch_sptr_t sketch, lshf_sptr_t lshf, const vec<str>& seq_batch, 
+            const vec<str>& qid_batch, params_t<T> params)
   : sketch(sketch)
   , lshf(lshf)
   , k(lshf->get_k())
   , h(lshf->get_h())
   , m(lshf->get_m())
-  , batch_size(qs->cbatch_size)
+  , batch_size(seq_batch.size())
   , params(params)
   , min_length(params.min_length)
   , chisq(params.chisq)
+  , seq_batch(seq_batch)
+  , qid_batch(qid_batch)
 {
-  std::swap(qs->seq_batch, seq_batch);
-  std::swap(qs->identifier_batch, identifier_batch);
   llhf = std::make_shared<LLH<T>>(k, h, sketch->get_rho(), params.hdist_th, params.dist_th);
   const uint64_t u64m = std::numeric_limits<uint64_t>::max();
   mask_lr = ((u64m >> (64 - k)) << 32) + ((u64m << 32) >> (64 - k));
@@ -263,17 +264,17 @@ void QIE<T>::map_sequences(std::ostream& output_stream)
     const char* cseq = seq_batch[bix].data();
     const uint64_t len = seq_batch[bix].size();
     onmers = 0;
-    en_mers = len - k + 1;
+    enmers = len - k + 1;
 
-    DIM<T> dim_or(llhf, params.hdist_th, en_mers);
-    DIM<T> dim_rc(llhf, params.hdist_th, en_mers);
+    DIM<T> dim_or(llhf, params.hdist_th, enmers);
+    DIM<T> dim_rc(llhf, params.hdist_th, enmers);
     search_mers(cseq, len, dim_or, dim_rc);
 
     if constexpr (std::is_same_v<T, double>) {
       const bool use_rc = (llhf->get_sign() * dim_or.get_fdt()) >= (llhf->get_sign() * dim_rc.get_fdt());
       DIM<T>& dim = use_rc ? dim_rc : dim_or;
       dim.inclusive_scan();
-      dim.extract_intervals(std::min(min_length, en_mers) - 1);
+      dim.extract_intervals(std::min(min_length, enmers) - 1);
       dim.expand_intervals(chisq);
       report_intervals(batch_stream, dim);
     } else {
@@ -283,7 +284,7 @@ void QIE<T>::map_sequences(std::ostream& output_stream)
       for (size_t i = 0; i < WIDTH; ++i) {
         const bool use_rc = (llhf->get_sign()[i] * dim_or.get_fdt()[i]) >= (llhf->get_sign()[i] * dim_rc.get_fdt()[i]);
         DIM<T>& dim = use_rc ? dim_rc : dim_or;
-        dim.extract_intervals(std::min(min_length, en_mers) - 1, i);
+        dim.extract_intervals(std::min(min_length, enmers) - 1, i);
         dim.expand_intervals(chisq, i);
         report_intervals(batch_stream, dim, i);
       }
@@ -346,15 +347,15 @@ template<typename T>
 void QIE<T>::report_intervals(std::ostream& output_stream, DIM<T>& dim, size_t idx)
 { // TODO: Revisit.
   double dist_th = at(params.dist_th, idx);
-  uint64_t n = en_mers + k - 1;
+  uint64_t n = enmers + k - 1;
   interval_t x;
   uint64_t i = 0;
   x = dim.get_interval(i, idx);
-  if (x.first == en_mers) {
-    output_stream << WRITE_CINTERVAL(identifier_batch[bix], n, n, n, dist_th) << '\n';
+  if (x.first == enmers) {
+    output_stream << WRITE_CINTERVAL(qid_batch[bix], n, n, n, dist_th) << '\n';
   }
-  while (x.first < en_mers) {
-    output_stream << WRITE_CINTERVAL(identifier_batch[bix], x.first, x.second + k - 1, n, dist_th) << '\n';
+  while (x.first < enmers) {
+    output_stream << WRITE_CINTERVAL(qid_batch[bix], x.first, x.second + k - 1, n, dist_th) << '\n';
     x = dim.get_interval(++i, idx);
   }
 }

@@ -17,100 +17,115 @@ void BaseLSH::set_nrows()
 
 bool BaseLSH::validate_configuration()
 {
-  bool is_invalid = true;
-  if ((is_invalid = w < k)) {
+  bool is_invalid = false;
+  if (w < k) {
+    is_invalid = true;
     std::cerr << "The minimum minimizer window size (-w) is k (-k)!" << std::endl;
   }
-  if ((is_invalid = h < 3)) {
+  if (h < 3) {
+    is_invalid = true;
     std::cerr << "The minimum number of LSH positions (-h) is 3!" << std::endl;
   }
-  if ((is_invalid = h > 15)) {
+  if (h > 15) {
+    is_invalid = true;
     std::cerr << "The maximum number of LSH positions (-h) is 15!" << std::endl;
   }
-  if ((is_invalid = k > 31)) {
+  if (k > 31) {
+    is_invalid = true;
     std::cerr << "The maximum allowed k-mer length (-k) is 31!" << std::endl;
   }
-  if ((is_invalid = k < 19)) {
+  if (k < 19) {
+    is_invalid = true;
     std::cerr << "The minimum allowed k-mer length (-k) is 19!" << std::endl;
   }
-  if ((is_invalid = (k - h) > 16)) {
+  if ((k - h) > 16) {
+    is_invalid = true;
     std::cerr << "For compact k-mer encodings, h must be >= k-16!" << std::endl;
   }
-  // if (sdust_t == 0 || sdust_w == 0) {
-  //   std::cerr << "Setting --sdust-w or --sdust-t to 0 will disable dustmasker!" << std::endl;
-  // }
   return !is_invalid;
 }
 
-void BaseLSH::save_configuration(std::ofstream& cfg_stream)
+void MapSC::header_dreport(strstream& dreport_stream) {}
+
+void MapSC::map()
 {
-  cfg_stream.write(reinterpret_cast<char*>(&k), sizeof(uint8_t));
-  cfg_stream.write(reinterpret_cast<char*>(&w), sizeof(uint8_t));
-  cfg_stream.write(reinterpret_cast<char*>(&h), sizeof(uint8_t));
-  cfg_stream.write(reinterpret_cast<char*>(&m), sizeof(uint32_t));
-  cfg_stream.write(reinterpret_cast<char*>(&r), sizeof(uint32_t));
-  cfg_stream.write(reinterpret_cast<char*>(&frac), sizeof(bool));
-  cfg_stream.write(reinterpret_cast<char*>(&nrows), sizeof(uint32_t));
-  cfg_stream.write(reinterpret_cast<char*>(lshf->ppos_data()), (h) * sizeof(uint8_t));
-  cfg_stream.write(reinterpret_cast<char*>(lshf->npos_data()), (k - h) * sizeof(uint8_t));
+  strstream dreport_stream;
+  header_dreport(dreport_stream);
+
+  qseq_sptr_t qs = std::make_shared<QSeq>(query_path);
+
+  bool cont_reading;
+  while ((cont_reading = qs->read_next_batch())) {
+    total_qseq += qs->get_cbatch();
+  }
+
+  std::ifstream sketch_stream(sketch_path, std::ifstream::binary);
+  check_fstream(sketch_stream, "Cannot open sketch file: " + sketch_path.string());
+
+  uint32_t nsketches;
+  sketch_stream.read(reinterpret_cast<char*>(&nsketches), sizeof(uint32_t));
+  std::cerr << "Processing " << nsketches << " sketches..." << std::endl;
+
+  params_t<double> params_single = {dist_th.size(), *dist_th.data(), hdist_th, min_length, chisq};
+  params_t<cm512_t> params_multiple = {dist_th.size(), {0}, hdist_th, min_length, chisq};
+  std::copy(dist_th.begin(), dist_th.end(), params_multiple.dist_th.begin());
+
+  for (uint32_t i = 0; i < nsketches; ++i) {
+    sketch_sptr_t sketch = std::make_shared<Sketch>(sketch_path);
+    sketch->load_from_offset(sketch_stream, 0);
+    sketch->make_rho_partial();
+
+    *output_stream << "#SKETCH_ID:" << sketch->get_refid() << " TIMESTAMP:" << sketch->get_timestamp() << '\n';
+
+    if (dist_th.size() == 1) {
+      QIE<double> qie(sketch, sketch->get_lshf(), qs->seq_batch, qs->qid_batch, params_single);
+      qie.map_sequences(*output_stream);
+    } else {
+      QIE<cm512_t> qie(sketch, sketch->get_lshf(), qs->seq_batch, qs->qid_batch, params_multiple);
+      qie.map_sequences(*output_stream);
+    }
+    std::cerr << "\rProcessed sketch " << (i + 1) << "/" << nsketches << std::flush;
+    if (i == nsketches - 1) std::cerr << std::endl;
+  }
+
+  sketch_stream.close();
 }
 
-void MapSketch::load_sketch()
+void SketchSC::create()
 {
-  sketch->load_full_sketch();
-  sketch->make_rho_partial();
-}
-
-void SketchTarget::create_sketch()
-{
-  rseq_sptr_t rs = std::make_shared<RSeq>(input, lshf, w, r, frac);
+  rseq_sptr_t rs = std::make_shared<RSeq>(input_path, lshf, w, r, frac);
   sdhm_sptr_t sdhm = std::make_shared<SDHM>();
   sdhm->fill_table(nrows, rs);
   std::cout << sdhm->get_nkmers() << std::endl;
   sketch_sfhm = std::make_shared<SFHM>(sdhm);
-
   rho = rs->get_rho();
+
   std::cerr << "Total number of k-mers included in the sketch: " << sdhm->get_nkmers() << std::endl;
   std::cerr << "Subsampling rate (rho) is: " << rho << std::endl;
+
+  sketch = std::make_shared<Sketch>(sketch_path);
+  sketch->set_refid(sketch_path.filename());
+  uint64_t timestamp =
+    std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+  sketch->set_timestamp(timestamp);
 }
 
-void SketchTarget::save_sketch()
+void SketchSC::save()
 {
   std::ofstream sketch_stream(sketch_path, std::ofstream::binary);
+  uint32_t nsketches = 1;
+  sketch_stream.write(reinterpret_cast<char*>(&nsketches), sizeof(uint32_t));
+  sketch->write_header(sketch_stream);
+  sketch->write_config(sketch_stream);
   sketch_sfhm->save(sketch_stream);
-  save_configuration(sketch_stream);
-  sketch_stream.write(reinterpret_cast<char*>(&rho), sizeof(double));
   check_fstream(sketch_stream, "Failed to write the sketch!", sketch_path);
   sketch_stream.close();
 }
 
-void MapSketch::header_dreport(strstream& dreport_stream) {}
-
-void MapSketch::map_sequences()
-{
-  strstream dreport_stream;
-  header_dreport(dreport_stream);
-  qseq_sptr_t qs = std::make_shared<QSeq>(query);
-  bool cont_reading = false;
-  params_t<double> params_single = {dist_th.size(), *dist_th.data(), hdist_th, min_length, chisq};
-  params_t<cm512_t> params_multiple = {dist_th.size(), {0}, hdist_th, min_length, chisq};
-  std::copy(dist_th.begin(), dist_th.end(), params_multiple.dist_th.begin());
-  while ((cont_reading = qs->read_next_batch()) || !qs->is_batch_finished()) {
-    total_qseq += qs->get_cbatch_size();
-    if (dist_th.size() == 1) {
-      QIE<double> qie(sketch, sketch->get_lshf(), qs, params_single);
-      qie.map_sequences(*output_stream);
-    } else {
-      QIE<cm512_t> qie(sketch, sketch->get_lshf(), qs, params_multiple);
-      qie.map_sequences(*output_stream);
-    }
-  }
-}
-
-SketchTarget::SketchTarget(CLI::App& sc)
+SketchSC::SketchSC(CLI::App& sc)
 {
   set_sketch_defaults();
-  sc.add_option("-i,--input-file", input, "Input FASTA/FASTQ file <path> (or URL) (gzip compatible).")
+  sc.add_option("-i,--input-path", input_path, "Input FASTA/FASTQ file <path> (or URL) (gzip compatible).")
     ->required()
     ->check(url_validator | CLI::ExistingFile);
   sc.add_option("-o,--output-path", sketch_path, "Path to store the resulting binary sketch file.")->required();
@@ -121,8 +136,6 @@ SketchTarget::SketchTarget(CLI::App& sc)
   sc.add_option("-r,--residue-lsh", r, "A k-mer x will be included only if r = LSH(x) mod m. [1]")
     ->check(CLI::NonNegativeNumber);
   sc.add_flag("--frac,!--no-frac", frac, "Include k-mers with r <= LSH(x) mod m. [true]");
-  // sc.add_option("--sdust-t", sdust_t, "SDUST threshold (NCBI dustmasker: 20). [0]")->check(CLI::NonNegativeNumber);
-  // sc.add_option("--sdust-w", sdust_w, "SDUST window (NCBI dustmasker: 64). [0]")->check(CLI::NonNegativeNumber);
   sc.callback([&]() {
     if (!(sc.count("-w") + sc.count("--win-len"))) {
       w = k + 6;
@@ -134,9 +147,9 @@ SketchTarget::SketchTarget(CLI::App& sc)
   });
 }
 
-MapSketch::MapSketch(CLI::App& sc)
+MapSC::MapSC(CLI::App& sc)
 {
-  sc.add_option("-q,--query", query, "Query FASTA/FASTQ file <path> (or URL) (gzip compatible).")
+  sc.add_option("-q,--query-path", query_path, "Query FASTA/FASTQ file <path> (or URL) (gzip compatible).")
     ->required()
     ->check(url_validator | CLI::ExistingFile);
   sc.add_option("-i,--sketch-path", sketch_path, "Sketch file at <path> to query.")->required()->check(CLI::ExistingFile);
@@ -154,8 +167,52 @@ MapSketch::MapSketch(CLI::App& sc)
       output_file.open(output_path);
       output_stream = &output_file;
     }
-    sketch = std::make_shared<Sketch>(sketch_path);
   });
+}
+
+void MergeSC::merge()
+{
+  std::cerr << "Preparing to merge " << sketch_paths.size() << " sketches" << std::endl;
+
+  std::ofstream ostream(output_path, std::ofstream::binary);
+
+  uint32_t nsketches = sketch_paths.size();
+  ostream.write(reinterpret_cast<char*>(&nsketches), sizeof(uint32_t));
+
+  for (size_t i = 0; i < sketch_paths.size(); ++i) {
+    std::ifstream istream(sketch_paths[i], std::ifstream::binary);
+    check_fstream(istream, "Cannot open sketch file", sketch_paths[i]);
+
+    uint32_t nsketches;
+    istream.read(reinterpret_cast<char*>(&nsketches), sizeof(uint32_t));
+
+    if (nsketches != 1) {
+      error_exit("Expected single sketch file, but found multi-sketch file: " + sketch_paths[i]);
+    }
+    constexpr size_t buffer_size = 4 * 1024 * 1024; // 4MB buffer
+    std::vector<char> buffer(buffer_size);
+    while (istream) {
+      istream.read(buffer.data(), buffer_size);
+      std::streamsize bytes_read = istream.gcount();
+      if (bytes_read > 0) {
+        ostream.write(buffer.data(), bytes_read);
+      }
+    }
+
+    check_fstream(istream, "Failed to read from the sketch file!", sketch_paths[i]);
+    istream.close();
+  }
+
+  check_fstream(ostream, "Failed to write the merged sketch file!", output_path);
+  ostream.close();
+
+  std::cerr << "Merged sketch saved with " << sketch_paths.size() << " sketches" << std::endl;
+}
+
+MergeSC::MergeSC(CLI::App& sc)
+{
+  sc.add_option("-i,--sketch-paths", sketch_paths, "Input sketch files to merge.")->required()->check(CLI::ExistingFile);
+  sc.add_option("-o,--output-path", output_path, "Path to store the merged sketch file.")->required();
 }
 
 int main(int argc, char** argv)
@@ -179,15 +236,17 @@ int main(int argc, char** argv)
   });
   app.add_option("--num-threads", num_threads, "Number of threads to use in OpenMP-based parallelism. [1]");
 
-  auto& sc_sketch = *app.add_subcommand("sketch", "Create a sketch from k-mers in a single FASTA/FASTQ file.");
-  auto& sc_map = *app.add_subcommand("map", "Seek query sequences in a sketch and estimate distances.");
+  auto& sc_sketch = *app.add_subcommand("sketch", "Create sketches from FASTA/FASTQ files.");
+  auto& sc_map = *app.add_subcommand("map", "Map queries and extract distance-based patterns from sketches.");
+  auto& sc_merge = *app.add_subcommand("merge", "Merge multiple sketches into a single sketch file.");
 
-  SketchTarget krepp_sketch(sc_sketch);
-  MapSketch krepp_map(sc_map);
+  SketchSC krepp_sketch(sc_sketch);
+  MapSC krepp_map(sc_map);
+  MergeSC krepp_merge(sc_merge);
 
   CLI11_PARSE(app, argc, argv);
   for (int i = 0; i < argc; ++i) {
-    invocation += std::string(argv[i]) + " ";
+    invocation += str(argv[i]) + " ";
   }
   if (!invocation.empty()) {
     invocation.pop_back();
@@ -195,7 +254,8 @@ int main(int argc, char** argv)
 
   auto tstart = std::chrono::system_clock::now();
   std::time_t tstart_f = std::chrono::system_clock::to_time_t(tstart);
-  std::cerr << "Invocation: " << invocation << "\n";
+  str invocation_str = "Invocation: " + invocation + "\n";
+  std::cerr << invocation_str;
   std::cerr << std::ctime(&tstart_f);
 
   if (sc_sketch.parsed()) {
@@ -203,18 +263,25 @@ int main(int argc, char** argv)
     krepp_sketch.set_nrows();
     krepp_sketch.set_lshf();
     std::chrono::duration<float> es_b = std::chrono::system_clock::now() - tstart;
-    krepp_sketch.create_sketch();
-    krepp_sketch.save_sketch();
+    krepp_sketch.create();
+    krepp_sketch.save();
     std::chrono::duration<float> es_s = std::chrono::system_clock::now() - tstart - es_b;
     std::cerr << "Done sketching & saving, elapsed: " << es_s.count() << " sec" << std::endl;
   }
 
+  if (sc_merge.parsed()) {
+    std::cerr << "Merging sketches..." << std::endl;
+    std::chrono::duration<float> es_b = std::chrono::system_clock::now() - tstart;
+    krepp_merge.merge();
+    std::chrono::duration<float> es_s = std::chrono::system_clock::now() - tstart - es_b;
+    std::cerr << "Done merging sketches, elapsed: " << es_s.count() << " sec" << std::endl;
+  }
+
   if (sc_map.parsed()) {
     std::cerr << "Loading the sketch..." << std::endl;
-    krepp_map.load_sketch();
     std::cerr << "Seeking query sequences in the sketch..." << std::endl;
     std::chrono::duration<float> es_b = std::chrono::system_clock::now() - tstart;
-    krepp_map.map_sequences();
+    krepp_map.map();
     std::chrono::duration<float> es_s = std::chrono::system_clock::now() - tstart - es_b;
     std::cerr << "Done mapping sequences, elapsed: " << es_s.count() << " sec" << std::endl;
     std::cerr << "Total number of sequences queried: " << krepp_map.get_total_qseq() << std::endl;

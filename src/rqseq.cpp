@@ -4,7 +4,7 @@
 // #include "sdust.h"
 // }
 
-RSeq::RSeq(std::string input, lshf_sptr_t lshf, uint8_t w, uint32_t r, bool frac)
+RSeq::RSeq(str input, lshf_sptr_t lshf, uint8_t w, uint32_t r, bool frac)
   : w(w)
   , r(r)
   , frac(frac)
@@ -29,7 +29,7 @@ RSeq::RSeq(std::string input, lshf_sptr_t lshf, uint8_t w, uint32_t r, bool frac
 
   gfile = gzopen(input_path.c_str(), "rb");
   if (gfile == nullptr) {
-    error_exit(std::string("Failed to open the file at ") + input_path.string());
+    error_exit(str("Failed to open the file at ") + input_path.string());
   }
   kseq = kseq_init(gfile);
 }
@@ -147,7 +147,7 @@ void RSeq::extract_mers(vvec<T>& table)
   n2_est += c2.estimate();
 }
 
-QSeq::QSeq(std::string input)
+QSeq::QSeq(str input)
 {
   is_url = std::regex_match(input, url_regexp);
   if (is_url) {
@@ -161,7 +161,7 @@ QSeq::QSeq(std::string input)
   }
   gfile = gzopen(input_path.c_str(), "rb");
   if (gfile == nullptr) {
-    error_exit(std::string("Failed to open the file at ") + input_path.string());
+    error_exit(str("Failed to open the file at ") + input_path.string());
   }
   kseq = kseq_init(gfile);
 }
@@ -174,35 +174,29 @@ QSeq::~QSeq()
 
 bool QSeq::read_next_batch()
 {
-  seq_batch.clear();
-  identifier_batch.clear();
-  seq_batch.reserve(rbatch_size);
-  identifier_batch.reserve(rbatch_size);
   bool cont_reading = false;
-  uint64_t ix = 0, bpc = 0;
-  // Alternatively, use (ix < rbatch_size).
-  while ((bpc < bpc_limit) && (cont_reading = kseq_read(kseq) >= 0)) {
-    bpc += kseq->seq.l;
+  uint64_t ix = 0;
+  while ((ix < rbatch_size) && (cont_reading = (kseq_read(kseq) >= 0))) {
     seq_batch.emplace_back(kseq->seq.s);
-    identifier_batch.emplace_back(kseq->name.s);
+    qid_batch.emplace_back(kseq->name.s);
     ix++;
   }
   cbatch_size = ix;
   return cont_reading;
 }
 
-bool QSeq::is_batch_finished()
+bool QSeq::is_empty()
 {
-  assert(seq_batch.size() == identifier_batch.size());
-  return seq_batch.empty() && identifier_batch.empty();
+  assert(seq_batch.size() == qid_batch.size());
+  return seq_batch.empty() && qid_batch.empty();
 }
 
-void QSeq::clear_curr_batch()
+void QSeq::clear()
 {
   seq_batch.clear();
-  identifier_batch.clear();
+  qid_batch.clear();
 }
 
-uint64_t QSeq::get_cbatch_size() { return cbatch_size; }
+uint64_t QSeq::get_cbatch() { return cbatch_size; }
 
 template void RSeq::extract_mers(vvec<enc_t>& table);
