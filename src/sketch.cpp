@@ -5,38 +5,16 @@ Sketch::Sketch(std::filesystem::path sketch_path)
 {
 }
 
-void Sketch::write_header(std::ofstream& stream)
-{
-  uint64_t refid_len = refid.length();
-  stream.write(reinterpret_cast<char*>(&refid_len), sizeof(uint64_t));
-  stream.write(refid.c_str(), refid_len);
-  stream.write(reinterpret_cast<char*>(&timestamp), sizeof(uint64_t));
-}
-
-void Sketch::write_config(std::ofstream& stream)
-{
-  stream.write(reinterpret_cast<char*>(&k), sizeof(uint8_t));
-  stream.write(reinterpret_cast<char*>(&w), sizeof(uint8_t));
-  stream.write(reinterpret_cast<char*>(&h), sizeof(uint8_t));
-  stream.write(reinterpret_cast<char*>(&m), sizeof(uint32_t));
-  stream.write(reinterpret_cast<char*>(&r), sizeof(uint32_t));
-  stream.write(reinterpret_cast<char*>(&frac), sizeof(bool));
-  stream.write(reinterpret_cast<char*>(&nrows), sizeof(uint32_t));
-  stream.write(reinterpret_cast<char*>(lshf->ppos_data()), h * sizeof(uint8_t));
-  stream.write(reinterpret_cast<char*>(lshf->npos_data()), (k - h) * sizeof(uint8_t));
-  stream.write(reinterpret_cast<char*>(&rho), sizeof(double));
-}
-
 void Sketch::load_from_offset(std::ifstream& stream, uint64_t offset)
 {
   if (offset > 0) {
     stream.seekg(offset);
   }
 
-  uint64_t refid_len;
-  stream.read(reinterpret_cast<char*>(&refid_len), sizeof(uint64_t));
-  refid.resize(refid_len);
-  stream.read(&refid[0], refid_len);
+  uint64_t rid_len;
+  stream.read(reinterpret_cast<char*>(&rid_len), sizeof(uint64_t));
+  rid.resize(rid_len);
+  stream.read(&rid[0], rid_len);
   stream.read(reinterpret_cast<char*>(&timestamp), sizeof(uint64_t));
 
   stream.read(reinterpret_cast<char*>(&k), sizeof(uint8_t));

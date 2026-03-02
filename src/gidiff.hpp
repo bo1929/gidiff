@@ -65,6 +65,8 @@ public:
   SketchSC(CLI::App& sc);
   void create();
   void save();
+  void write_header(std::ofstream& stream);
+  void write_config(std::ofstream& stream);
 
 private:
   double rho;
@@ -79,7 +81,6 @@ class MapSC
 public:
   MapSC(CLI::App& sc);
   void map();
-  void header_dreport(strstream& dreport_stream);
   uint32_t get_total_qseq() { return total_qseq; }
 
 private:

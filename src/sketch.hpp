@@ -20,19 +20,8 @@ public:
   sfhm_sptr_t get_sfhm_sptr();
   lshf_sptr_t get_lshf();
   double get_rho();
-  str get_refid() { return refid; }
+  str get_rid() { return rid; }
   uint64_t get_timestamp() { return timestamp; }
-  void set_refid(const str& ident) { refid = ident; }
-  void set_timestamp(uint64_t ts) { timestamp = ts; }
-  uint8_t get_k() { return k; }
-  uint8_t get_w() { return w; }
-  uint8_t get_h() { return h; }
-  uint32_t get_m() { return m; }
-  uint32_t get_r() { return r; }
-  bool get_frac() { return frac; }
-  uint32_t get_nrows() { return nrows; }
-  void write_header(std::ofstream& stream);
-  void write_config(std::ofstream& stream);
 
 private:
   uint8_t k;
@@ -45,9 +34,9 @@ private:
   uint32_t nrows;
   lshf_sptr_t lshf = nullptr;
   sfhm_sptr_t sfhm = nullptr;
-  std::filesystem::path sketch_path;
-  str refid;
   uint64_t timestamp;
+  str rid;
+  std::filesystem::path sketch_path;
 };
 
 #endif

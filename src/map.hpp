@@ -23,7 +23,7 @@ public:
   static inline double at(T v, size_t idx);
   T fdt_at(uint64_t i) const { return fdc_v[i]; }
   T sdt_at(uint64_t i) const { return sdc_v[i]; }
-  // void optimize_loglikelihood();
+  // void optimize_loglikelihood(); // TODO: Is ever needed? If so, correct?
   void inclusive_scan();
   // void skip_mer(uint64_t i); // TODO: Anything better?
   void aggregate_mer(sketch_sptr_t sketch, uint32_t rix, enc_t enc_lr, uint64_t i);
@@ -61,11 +61,11 @@ class QIE
 
 public:
   QIE(sketch_sptr_t sketch, lshf_sptr_t lshf, const vec<str>& seq_batch, const vec<str>& qid_batch, params_t<T> params);
-  void map_sequences(std::ostream& output_stream);
+  void map_sequences(std::ostream& sout, const str& rid);
 
 private:
   void search_mers(const char* cseq, uint64_t len, DIM<T>& or_summary, DIM<T>& rc_summary);
-  void report_intervals(std::ostream& output_stream, DIM<T>& dim, size_t idx = 0);
+  void report_intervals(std::ostream& sout, const str& rid, DIM<T>& dim, bool rc, size_t idx = 0);
   static inline double at(T v, size_t idx);
 
   const sketch_sptr_t sketch;
@@ -88,6 +88,7 @@ private:
   const vec<str>& qid_batch;
 };
 
-#define WRITE_CINTERVAL(identifier, a, b, n, dist_th) identifier << '\t' << a << '\t' << b << '\t' << n << '\t' << dist_th
+#define WRITE_CINTERVAL(qid, n, a, b, strand, rid, dist_th)                                                                 \
+  qid << '\t' << n << '\t' << a << '\t' << b << '\t' << strand << '\t' << rid << '\t' << dist_th
 
 #endif

@@ -43,7 +43,7 @@ inline double DIM<T>::at(T v, const size_t idx)
 
 template<typename T>
 void DIM<T>::aggregate_mer(sketch_sptr_t sketch, uint32_t rix, enc_t enc_lr, uint64_t i)
-{
+{ // TODO: Consider binning positions and parameterizing this, should be easy enough.
   const uint32_t hdist_min = sketch->search_mer(rix, enc_lr);
 
   if (hdist_min <= hdist_th) {
@@ -255,10 +255,8 @@ QIE<T>::QIE(sketch_sptr_t sketch, lshf_sptr_t lshf, const vec<str>& seq_batch, c
 }
 
 template<typename T>
-void QIE<T>::map_sequences(std::ostream& output_stream)
+void QIE<T>::map_sequences(std::ostream& sout, const str& rid)
 {
-  strstream batch_stream;
-  // batch_stream.precision(4);
   for (bix = 0; bix < batch_size; ++bix) {
     const char* cseq = seq_batch[bix].data();
     const uint64_t len = seq_batch[bix].size();
@@ -267,33 +265,32 @@ void QIE<T>::map_sequences(std::ostream& output_stream)
       // TODO: too short? do something?
       continue;
     }
-    en_mers = len - k + 1;
+    enmers = len - k + 1;
 
     DIM<T> dim_or(llhf, params.hdist_th, enmers);
     DIM<T> dim_rc(llhf, params.hdist_th, enmers);
     search_mers(cseq, len, dim_or, dim_rc);
 
     if constexpr (std::is_same_v<T, double>) {
-      const bool use_rc = (llhf->get_sign() * dim_or.get_fdt()) >= (llhf->get_sign() * dim_rc.get_fdt());
-      DIM<T>& dim = use_rc ? dim_rc : dim_or;
+      const bool rc = (llhf->get_sign() * dim_or.get_fdt()) >= (llhf->get_sign() * dim_rc.get_fdt());
+      DIM<T>& dim = rc ? dim_rc : dim_or;
       dim.inclusive_scan();
       dim.extract_intervals(std::min(min_length, enmers) - 1);
       dim.expand_intervals(chisq);
-      report_intervals(batch_stream, dim);
+      report_intervals(sout, rid, dim, rc);
     } else {
       // TODO: Do not do this twice?
       dim_or.inclusive_scan();
       dim_rc.inclusive_scan();
       for (size_t i = 0; i < WIDTH; ++i) {
-        const bool use_rc = (llhf->get_sign()[i] * dim_or.get_fdt()[i]) >= (llhf->get_sign()[i] * dim_rc.get_fdt()[i]);
-        DIM<T>& dim = use_rc ? dim_rc : dim_or;
+        const bool rc = (llhf->get_sign()[i] * dim_or.get_fdt()[i]) >= (llhf->get_sign()[i] * dim_rc.get_fdt()[i]);
+        DIM<T>& dim = rc ? dim_rc : dim_or;
         dim.extract_intervals(std::min(min_length, enmers) - 1, i);
         dim.expand_intervals(chisq, i);
-        report_intervals(batch_stream, dim, i);
+        report_intervals(sout, rid, dim, rc, i);
       }
     }
   }
-  output_stream << batch_stream.rdbuf();
 }
 
 template<typename T>
@@ -305,6 +302,7 @@ void QIE<T>::search_mers(const char* cseq, uint64_t len, DIM<T>& dim_or, DIM<T>&
   for (; i < len; ++i) {
     if (__builtin_expect(SEQ_NT4_TABLE[cseq[i]] >= 4, 0)) {
       l = 0;
+      // TODO: What to do for missing ones?
       continue;
     }
     ++l;
@@ -347,18 +345,16 @@ void QIE<T>::search_mers(const char* cseq, uint64_t len, DIM<T>& dim_or, DIM<T>&
 }
 
 template<typename T>
-void QIE<T>::report_intervals(std::ostream& output_stream, DIM<T>& dim, size_t idx)
-{ // TODO: Revisit.
+void QIE<T>::report_intervals(std::ostream& sout, const str& rid, DIM<T>& dim, bool rc, size_t idx)
+{ // TODO: Revisit?
+  const str strand = rc ? "-" : "+";
   double dist_th = at(params.dist_th, idx);
   uint64_t n = enmers + k - 1;
   interval_t x;
   uint64_t i = 0;
   x = dim.get_interval(i, idx);
-  /* if (x.first == en_mers) { */
-  /*   output_stream << WRITE_CINTERVAL(identifier_batch[bix], n, n, n, dist_th) << '\n'; */
-  /* } */
-  while (x.first < en_mers) {
-    output_stream << WRITE_CINTERVAL(identifier_batch[bix], x.first, x.second + k - 1, n, dist_th) << '\n';
+  while (x.first < enmers) {
+    sout << WRITE_CINTERVAL(qid_batch[bix], n, x.first, x.second + k - 1, strand, rid, dist_th) << '\n';
     x = dim.get_interval(++i, idx);
   }
 }

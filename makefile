@@ -11,6 +11,7 @@ CXXFLAGS = -std=c++17 -O3 \
 						-flto # \
 						# -fno-trapping-math \
 						# -ffast-math
+# Keep it funroll?
 
 WFLAGS += -Wno-unused-result -Wno-unused-command-line-argument -Wno-undefined-inline
 
@@ -21,7 +22,7 @@ INC = -I simde
 PROGRAM = gidiff
 OBJECTS =	build/random.o build/enc.o \
 					build/MurmurHash3.o build/lshf.o \
-					build/hm.o	build/rqseq.o \
+					build/hm.o build/rqseq.o \
 					build/sketch.o build/map.o \
 					build/gidiff.o
 

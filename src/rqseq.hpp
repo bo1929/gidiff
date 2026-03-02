@@ -115,6 +115,8 @@ public:
   void clear();
   bool is_empty();
   uint64_t get_cbatch();
+  const vec<str>& get_seq_batch() const { return seq_batch; }
+  const vec<str>& get_qid_batch() const { return qid_batch; }
 
 private:
   gzFile gfile;
@@ -122,8 +124,8 @@ private:
   bool is_url;
   vec<str> seq_batch;
   vec<str> qid_batch;
-  uint64_t rbatch_size = RBATCH_SIZE;
   uint64_t cbatch_size = 0;
+  uint64_t rbatch_size = RBATCH_SIZE;
   std::filesystem::path input_path;
 };
 
