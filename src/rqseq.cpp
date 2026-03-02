@@ -1,8 +1,4 @@
 #include "rqseq.hpp"
-// extern "C"
-// {
-// #include "sdust.h"
-// }
 
 RSeq::RSeq(str input, lshf_sptr_t lshf, uint8_t w, uint32_t r, bool frac)
   : w(w)
@@ -79,11 +75,6 @@ void RSeq::extract_mers(vvec<T>& table)
   uint32_t mrs = 0, mre = len;
   int mn = 0, mi = 0;
   uint64_t* rgs;
-  // if (sdust_t > 0 && sdust_w > 0) rgs = sdust(0, (uint8_t*)cseq, -1, sdust_t, sdust_w, &mn);
-  // if (mn > 0) {
-  //   mre = (uint32_t)(rgs[mi]);
-  //   mrs = (uint32_t)(rgs[mi] >> 32);
-  // }
   for (i = l = 0; i < len;) {
     if (SEQ_NT4_TABLE[cseq[i]] >= 4) {
       l = 0, i++;
@@ -98,23 +89,6 @@ void RSeq::extract_mers(vvec<T>& table)
     } else {
       update_encoding(cseq + i - 1, orenc64_lr, orenc64_bp);
     }
-    // Add this block for SDUST masking.
-    // if ((mi < mn) && ((i + k) > mrs)) {
-    //   c1.add(xhur64(orenc64_bp & mask_bp));
-    //   if (i < mre) {
-    //     continue;
-    //   } else {
-    //     mi++;
-    //     l = 0;
-    //     if ((mi < mn)) {
-    //       mre = (uint32_t)(rgs[mi]);
-    //       mrs = (uint32_t)(rgs[mi] >> 32);
-    //     } else {
-    //       free(rgs);
-    //     }
-    //     continue;
-    //   }
-    // }
     klix = kix % ldiff;
     winenc_v[klix] = {orenc64_bp & mask_bp, orenc64_lr & mask_lr, xhur64(orenc64_bp & mask_bp)};
     c1.add(winenc_v[klix].z);

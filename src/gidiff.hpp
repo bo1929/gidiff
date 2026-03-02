@@ -46,8 +46,6 @@ public:
     r = 1;
     frac = true;
     nrows = pow(2, 2 * h - 1);
-    // sdust_t = 0;
-    // sdust_w = 0;
   }
 
 protected:
@@ -58,8 +56,6 @@ protected:
   uint32_t m;
   uint32_t r;
   uint32_t nrows;
-  uint32_t sdust_t = 0;
-  uint32_t sdust_w = 0;
   lshf_sptr_t lshf = nullptr;
 };
 
