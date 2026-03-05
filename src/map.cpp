@@ -19,13 +19,13 @@ DIM<T>::DIM(llh_sptr_t<T> llhf, uint32_t hdist_th, uint64_t enmers)
   fdpmax_v.reserve(enmers + 2);
   fdsmin_v.reserve(enmers + 2);
 
-  if constexpr (std::is_same_v<T, double>) {
-    fdt = 0.0;
-    sdt = 0.0;
-  } else {
-    fdt.fill(0.0);
-    sdt.fill(0.0);
-  }
+  // if constexpr (std::is_same_v<T, double>) {
+  //   fdt = 0.0;
+  //   sdt = 0.0;
+  // } else {
+  //   fdt.fill(0.0);
+  //   sdt.fill(0.0);
+  // }
   // for (size_t i = 0; i < WIDTH; ++i) {
   //   rintervals_v[i].clear();
   //   eintervals_v[i].clear();
@@ -63,21 +63,21 @@ void DIM<T>::aggregate_mer(sketch_sptr_t sketch, uint32_t rix, enc_t enc_lr, uin
     fdc_v[i] = llhf->get_fdc();
   }
 
-  if constexpr (std::is_same_v<T, double>) {
-    // fdt += fdc_v.back();
-    // sdt += sdc_v.back();
-    fdt += fdc_v[i];
-    sdt += sdc_v[i];
-  } else {
-    simde__m512d vfdt = simde_mm512_load_pd(fdt.data());
-    simde__m512d vsdt = simde_mm512_load_pd(sdt.data());
-    simde__m512d fdc = simde_mm512_load_pd(fdc_v[i].data());
-    simde__m512d sdc = simde_mm512_load_pd(sdc_v[i].data());
-    vfdt = simde_mm512_add_pd(vfdt, fdc);
-    vsdt = simde_mm512_add_pd(vsdt, sdc);
-    simde_mm512_store_pd(fdt.data(), vfdt);
-    simde_mm512_store_pd(sdt.data(), vsdt);
-  }
+  // if constexpr (std::is_same_v<T, double>) {
+  //   // fdt += fdc_v.back();
+  //   // sdt += sdc_v.back();
+  //   fdt += fdc_v[i];
+  //   sdt += sdc_v[i];
+  // } else {
+  //   simde__m512d vfdt = simde_mm512_load_pd(fdt.data());
+  //   simde__m512d vsdt = simde_mm512_load_pd(sdt.data());
+  //   simde__m512d fdc = simde_mm512_load_pd(fdc_v[i].data());
+  //   simde__m512d sdc = simde_mm512_load_pd(sdc_v[i].data());
+  //   vfdt = simde_mm512_add_pd(vfdt, fdc);
+  //   vsdt = simde_mm512_add_pd(vsdt, sdc);
+  //   simde_mm512_store_pd(fdt.data(), vfdt);
+  //   simde_mm512_store_pd(sdt.data(), vsdt);
+  // }
 }
 
 template<typename T>
@@ -277,47 +277,49 @@ void QIE<T>::map_sequences(std::ostream& sout, const str& rid)
     }
     enmers = len - k + 1;
 
-    DIM<T> dim_or(llhf, params.hdist_th, enmers);
+    DIM<T> dim_fw(llhf, params.hdist_th, enmers);
     DIM<T> dim_rc(llhf, params.hdist_th, enmers);
-    search_mers(cseq, len, dim_or, dim_rc);
+    search_mers(cseq, len, dim_fw, dim_rc);
 
     if constexpr (std::is_same_v<T, double>) {
-      const bool rc = (llhf->get_sign() * dim_or.get_fdt()) >= (llhf->get_sign() * dim_rc.get_fdt());
-      DIM<T>& dim = rc ? dim_rc : dim_or;
-      dim.inclusive_scan();
-      dim.extract_intervals(std::min(min_length, enmers) - 1);
-      dim.expand_intervals(chisq);
-      report_intervals(sout, rid, dim, rc);
+      dim_fw.inclusive_scan();
+      dim_rc.inclusive_scan();
+      dim_fw.extract_intervals(std::min(min_length, enmers) - 1);
+      dim_rc.extract_intervals(std::min(min_length, enmers) - 1);
+      dim_fw.expand_intervals(chisq);
+      dim_rc.expand_intervals(chisq);
+      report_intervals(sout, rid, dim_fw, false);
+      report_intervals(sout, rid, dim_rc, true);
     } else {
       // TODO: Do not do this twice?
-      dim_or.inclusive_scan();
+      dim_fw.inclusive_scan();
       dim_rc.inclusive_scan();
       for (size_t i = 0; i < WIDTH; ++i) {
-        const bool rc = (llhf->get_sign()[i] * dim_or.get_fdt()[i]) >= (llhf->get_sign()[i] * dim_rc.get_fdt()[i]);
-        DIM<T>& dim = rc ? dim_rc : dim_or;
-        dim.extract_intervals(std::min(min_length, enmers) - 1, i);
-        dim.expand_intervals(chisq, i);
-        report_intervals(sout, rid, dim, rc, i);
+        dim_fw.extract_intervals(std::min(min_length, enmers) - 1, i);
+        dim_rc.extract_intervals(std::min(min_length, enmers) - 1, i);
+        dim_fw.expand_intervals(chisq, i);
+        dim_rc.expand_intervals(chisq, i);
+        report_intervals(sout, rid, dim_fw, true, i);
+        report_intervals(sout, rid, dim_rc, true, i);
       }
     }
   }
 }
 
 template<typename T>
-void QIE<T>::search_mers(const char* cseq, uint64_t len, DIM<T>& dim_or, DIM<T>& dim_rc)
+void QIE<T>::search_mers(const char* cseq, uint64_t len, DIM<T>& dim_fw, DIM<T>& dim_rc)
 {
   uint32_t i = 0, j = 0, l = 0;
   uint32_t orrix, rcrix;
   uint64_t orenc64_bp, orenc64_lr, rcenc64_bp;
   for (; i < len; ++i) {
     if (__builtin_expect(SEQ_NT4_TABLE[cseq[i]] >= 4, 0)) {
-      l = 0;
-      // TODO: What to do for missing ones?
+      l = 0; // TODO: What to do for missing ones?
       continue;
     }
     ++l;
     if (l < k) {
-      continue;
+      continue; // TODO: How to propagate the missing ones?
     }
     j = i - k + 1;
     if (l == k) {
@@ -333,7 +335,7 @@ void QIE<T>::search_mers(const char* cseq, uint64_t len, DIM<T>& dim_or, DIM<T>&
     if (rcenc64_bp < orenc64_bp) {
       orrix = lshf->compute_hash(orenc64_bp);
       if (__builtin_expect(sketch->check_partial(orrix), 1)) {
-        dim_or.aggregate_mer(sketch, orrix, lshf->drop_ppos_lr(orenc64_lr), j);
+        dim_fw.aggregate_mer(sketch, orrix, lshf->drop_ppos_lr(orenc64_lr), j);
       }
     } else {
       rcrix = lshf->compute_hash(rcenc64_bp);
@@ -344,7 +346,7 @@ void QIE<T>::search_mers(const char* cseq, uint64_t len, DIM<T>& dim_or, DIM<T>&
 #else
     orrix = lshf->compute_hash(orenc64_bp);
     if (__builtin_expect(sketch->check_partial(orrix), 1)) {
-      dim_or.aggregate_mer(sketch, orrix, lshf->drop_ppos_lr(orenc64_lr), j);
+      dim_fw.aggregate_mer(sketch, orrix, lshf->drop_ppos_lr(orenc64_lr), j);
     }
     rcrix = lshf->compute_hash(rcenc64_bp);
     if (__builtin_expect(sketch->check_partial(rcrix), 1)) {

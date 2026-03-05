@@ -45,14 +45,23 @@ bool BaseLSH::validate_configuration()
   return !is_invalid;
 }
 
+void MapSC::write_header()
+{
+  (*output_stream) << "QUERY_ID\tSEQ_LEN\tINTERVAL_START\tINTERVAL_END\tSTRAND\tREF_ID\tDIST_TH\n";
+}
+
 void MapSC::map()
 {
+  *(output_stream) << std::setprecision(10);
+  write_header();
+
   qseq_sptr_t qs = std::make_shared<QSeq>(query_path);
 
   bool cont_reading;
   while ((cont_reading = qs->read_next_batch())) {
-    total_qseq += qs->get_cbatch();
+    total_qseq += qs->get_cbatch_size();
   }
+  total_qseq += qs->get_cbatch_size();
 
   std::ifstream sketch_stream(sketch_path, std::ifstream::binary);
   check_fstream(sketch_stream, std::string("Cannot open sketch file: "), sketch_path.string());
@@ -61,7 +70,7 @@ void MapSC::map()
   sketch_stream.read(reinterpret_cast<char*>(&nsketches), sizeof(uint32_t));
   std::cerr << "Processing " << nsketches << " sketches..." << std::endl;
 
-  params_t<double> params_single = {dist_th.size(), *dist_th.data(), hdist_th, min_length, chisq};
+  params_t<double> params_single = {dist_th.size(), dist_th.front(), hdist_th, min_length, chisq};
   params_t<cm512_t> params_multiple = {dist_th.size(), {0}, hdist_th, min_length, chisq};
   std::copy(dist_th.begin(), dist_th.end(), params_multiple.dist_th.begin());
 
@@ -92,7 +101,6 @@ void SketchSC::create()
   rseq_sptr_t rs = std::make_shared<RSeq>(input_path, lshf, w, r, frac);
   sdhm_sptr_t sdhm = std::make_shared<SDHM>();
   sdhm->fill_table(nrows, rs);
-  std::cout << sdhm->get_nkmers() << std::endl;
   sketch_sfhm = std::make_shared<SFHM>(sdhm);
   rho = rs->get_rho();
 

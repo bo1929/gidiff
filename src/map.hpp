@@ -18,8 +18,8 @@ class DIM
 
 public:
   DIM(llh_sptr_t<T> llhf, uint32_t hdist_th, uint64_t enmers);
-  T get_fdt() const { return fdt; }
-  T get_sdt() const { return sdt; }
+  // T get_fdt() const { return fdt; }
+  // T get_sdt() const { return sdt; }
   static inline double at(T v, size_t idx);
   T fdt_at(uint64_t i) const { return fdc_v[i]; }
   T sdt_at(uint64_t i) const { return sdc_v[i]; }
@@ -39,8 +39,8 @@ private:
   uint64_t merna_count = 0;
   uint64_t mermiss_count = 0;
   vec<uint64_t> hdisthist_v;
-  T fdt;
-  T sdt;
+  // T fdt;
+  // Tsdt;
   vec<T> fdc_v;
   vec<T> sdc_v;
   vec<T> fdps_v;

@@ -80,6 +80,7 @@ class MapSC
 public:
   MapSC(CLI::App& sc);
   void map();
+  void write_header();
   uint64_t get_total_qseq() { return total_qseq; }
 
 private:

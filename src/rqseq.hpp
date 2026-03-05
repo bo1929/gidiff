@@ -112,7 +112,7 @@ public:
   bool read_next_batch();
   void clear();
   bool is_empty();
-  uint64_t get_cbatch();
+  uint64_t get_cbatch_size() const { return cbatch_size; }
   const vec<str>& get_seq_batch() const { return seq_batch; }
   const vec<str>& get_qid_batch() const { return qid_batch; }
 

@@ -164,6 +164,4 @@ void QSeq::clear()
   qid_batch.clear();
 }
 
-uint64_t QSeq::get_cbatch() { return cbatch_size; }
-
 template void RSeq::extract_mers(vvec<enc_t>& table);
