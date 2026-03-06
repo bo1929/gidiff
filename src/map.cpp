@@ -40,12 +40,10 @@ inline double DIM<T>::at(T v, const size_t idx)
 }
 
 template<typename T>
-void DIM<T>::aggregate_mer(sketch_sptr_t sketch, uint32_t rix, enc_t enc_lr, uint64_t i)
+void DIM<T>::aggregate_mer(uint32_t hdist_min, uint64_t i)
 {
   // This is binned, and i is the bin index.
   // Multiple k-mers that fall in the same bin all accumulate here.
-  const uint32_t hdist_min = sketch->search_mer(rix, enc_lr);
-
   if (hdist_min <= hdist_th) {
     merhit_count++;
     hdisthist_v[hdist_min]++;
@@ -336,23 +334,27 @@ void QIE<T>::search_mers(const char* cseq, uint64_t len, DIM<T>& dim_fw, DIM<T>&
 #ifdef CANONICAL
     if (rcenc64_bp < orenc64_bp) {
       orrix = lshf->compute_hash(orenc64_bp);
-      if (__builtin_expect(sketch->check_partial(orrix), 1)) {
-        dim_fw.aggregate_mer(sketch, orrix, lshf->drop_ppos_lr(orenc64_lr), bix_j);
+      uint32_t hdist_fw;
+      if (sketch->search_mer_partial(orrix, lshf->drop_ppos_lr(orenc64_lr), hdist_fw)) {
+        dim_fw.aggregate_mer(hdist_fw, bix_j);
       }
     } else {
       rcrix = lshf->compute_hash(rcenc64_bp);
-      if (__builtin_expect(sketch->check_partial(rcrix), 1)) {
-        dim_rc.aggregate_mer(sketch, rcrix, lshf->drop_ppos_lr(bp64_to_lr64(rcenc64_bp)), bix_j);
+      uint32_t hdist_rc;
+      if (sketch->search_mer_partial(rcrix, lshf->drop_ppos_lr(bp64_to_lr64(rcenc64_bp)), hdist_rc)) {
+        dim_rc.aggregate_mer(hdist_rc, bix_j);
       }
     }
 #else
     orrix = lshf->compute_hash(orenc64_bp);
-    if (__builtin_expect(sketch->check_partial(orrix), 1)) {
-      dim_fw.aggregate_mer(sketch, orrix, lshf->drop_ppos_lr(orenc64_lr), bix_j);
+    uint32_t hdist_fw;
+    if (sketch->search_mer_partial(orrix, lshf->drop_ppos_lr(orenc64_lr), hdist_fw)) {
+      dim_fw.aggregate_mer(hdist_fw, bix_j);
     }
     rcrix = lshf->compute_hash(rcenc64_bp);
-    if (__builtin_expect(sketch->check_partial(rcrix), 1)) {
-      dim_rc.aggregate_mer(sketch, rcrix, lshf->drop_ppos_lr(bp64_to_lr64(rcenc64_bp)), bix_j);
+    uint32_t hdist_rc;
+    if (sketch->search_mer_partial(rcrix, lshf->drop_ppos_lr(bp64_to_lr64(rcenc64_bp)), hdist_rc)) {
+      dim_rc.aggregate_mer(hdist_rc, bix_j);
     }
 #endif /* CANONICAL */
   }
@@ -362,8 +364,8 @@ template<typename T>
 void QIE<T>::report_intervals(std::ostream& sout, const str& rid, DIM<T>& dim, bool rc, size_t idx)
 { // TODO: Revisit?
   const str strand = rc ? "-" : "+";
-  double dist_th = at(params.dist_th, idx);
-  uint64_t n = enmers + k - 1;
+  const double dist_th = at(params.dist_th, idx);
+  const uint64_t n = enmers + k - 1;
   interval_t x;
   uint64_t i = 0;
   x = dim.get_interval(i, idx);

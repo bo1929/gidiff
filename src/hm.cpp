@@ -11,9 +11,7 @@ SFHM::SFHM(sdhm_sptr_t source)
   inc_t lix = 0;
   for (uint32_t rix = 0; rix < nrows; ++rix) {
     cpinc = std::min(limit_inc, static_cast<inc_t>(source->enc_vvec[rix].size()));
-    for (inc_t i = 0; i < cpinc; ++i) {
-      enc_v.push_back(source->enc_vvec[rix][i]);
-    }
+    enc_v.insert(enc_v.end(), source->enc_vvec[rix].begin(), source->enc_vvec[rix].begin() + cpinc);
     lix += cpinc;
     inc_v[rix] = lix;
     source->enc_vvec[rix].clear();
@@ -46,7 +44,7 @@ void SFHM::save(std::ofstream& sketch_stream)
   sketch_stream.write(reinterpret_cast<const char*>(inc_v.data()), sizeof(inc_t) * nrows);
 }
 
-std::vector<enc_t>::const_iterator SFHM::bucket_start(uint32_t rix)
+std::vector<enc_t>::const_iterator SFHM::bucket_iter_start(uint32_t rix)
 {
   if ((rix != 0) && (rix <= inc_v.size())) {
     return std::next(enc_v.begin(), inc_v[rix - 1]);
@@ -55,12 +53,38 @@ std::vector<enc_t>::const_iterator SFHM::bucket_start(uint32_t rix)
   }
 }
 
-std::vector<enc_t>::const_iterator SFHM::bucket_next(uint32_t rix)
+std::vector<enc_t>::const_iterator SFHM::bucket_iter_next(uint32_t rix)
 {
   if (rix < inc_v.size()) {
     return std::next(enc_v.begin(), inc_v[rix]);
   } else {
     return enc_v.end();
+  }
+}
+
+const enc_t* SFHM::bucket_ptr_start(uint32_t rix) const noexcept
+{
+  return enc_v.data() + ((rix != 0 && rix <= inc_v.size()) ? inc_v[rix - 1] : 0);
+}
+
+const enc_t* SFHM::bucket_ptr_next(uint32_t rix) const noexcept
+{
+  return enc_v.data() + (rix < inc_v.size() ? inc_v[rix] : nkmers);
+}
+
+void SFHM::prefetch_inc(uint32_t rix) const noexcept
+{
+  if (rix > 0 && rix <= inc_v.size()) {
+    __builtin_prefetch(&inc_v[rix - 1], 0, 1);
+  }
+}
+
+void SFHM::prefetch_enc(uint32_t rix) const noexcept
+{
+  const enc_t* start = bucket_ptr_start(rix);
+  const enc_t* end = bucket_ptr_next(rix);
+  if (start < end) {
+    __builtin_prefetch(start, 0, 0);
   }
 }
 

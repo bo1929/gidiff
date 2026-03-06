@@ -91,13 +91,13 @@ public:
     u = u_r;
   }
 
-  T get_sdc(uint32_t d) const { return sdc_v[d]; }
+  const T& get_sdc(uint32_t d) const { return sdc_v[d]; }
 
-  T get_fdc(uint32_t d) const { return fdc_v[d]; }
+  const T& get_fdc(uint32_t d) const { return fdc_v[d]; }
 
-  T get_sdc() const { return sdc_u; }
+  const T& get_sdc() const { return sdc_u; }
 
-  T get_fdc() const { return fdc_u; }
+  const T& get_fdc() const { return fdc_u; }
 
   T get_sign() const { return sign; }
 

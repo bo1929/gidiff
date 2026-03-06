@@ -26,7 +26,7 @@ public:
   // void optimize_loglikelihood(); // TODO: Is ever needed? If so, correct?
   void inclusive_scan();
   // void skip_mer(uint64_t i); // TODO: Anything better than ignoring?
-  void aggregate_mer(sketch_sptr_t sketch, uint32_t rix, enc_t enc_lr, uint64_t i);
+  void aggregate_mer(uint32_t hdist_min, uint64_t i);
   void extract_intervals(uint64_t tau, size_t idx = 0);
   uint64_t expand_intervals(double chisq_th, size_t idx = 0);
   interval_t get_interval(uint64_t i, size_t idx = 0);

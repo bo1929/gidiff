@@ -97,7 +97,7 @@ private:
   uint64_t total_qseq = 0;
   uint64_t min_length = 0;
   uint64_t bin_shift = 0;
-  double chisq = 3.841; // 95%
+  double chisq = 33.00051; // 1e-10
   std::vector<double> dist_th;
 };
 

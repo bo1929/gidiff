@@ -4,7 +4,7 @@ void BaseLSH::set_lshf() { lshf = std::make_shared<LSHF>(k, h, m); }
 
 void BaseLSH::set_nrows()
 {
-  uint32_t hash_size = pow(2, 2 * h);
+  uint32_t hash_size = 1u << (2 * h);
   uint32_t full_residue = hash_size % m;
   if (frac) {
     nrows = (hash_size / m) * (r + 1);
@@ -65,8 +65,7 @@ void MapSC::map()
   std::vector<uint64_t> sketch_offsets(nsketches);
   for (uint32_t i = 0; i < nsketches; ++i) {
     sketch_offsets[i] = static_cast<uint64_t>(sketch_stream.tellg());
-    sketch_sptr_t tmp = std::make_shared<Sketch>(sketch_path);
-    tmp->load_from_offset(sketch_stream, 0); // Advances stream past this sketch
+    Sketch::seek_past(sketch_stream); // reads headers, seeks over data
   }
   sketch_stream.close();
 
@@ -109,7 +108,7 @@ void MapSC::map()
       uint32_t done = done_count.fetch_add(1, std::memory_order_relaxed) + 1;
       {
         std::lock_guard<std::mutex> lock(cerr_mtx);
-        std::cerr << "\rProcessed sketch " << done << "/" << nsketches << std::flush;
+        std::cerr << "\rProcessed sketch " << done << "/" << nsketches << "..." << std::flush;
         if (done == nsketches) std::cerr << std::endl;
       }
     }
@@ -243,7 +242,7 @@ MapSC::MapSC(CLI::App& sc)
   sc.add_option("-i,--sketch-path", sketch_path, "Sketch file at <path> to query.")->required()->check(CLI::ExistingFile);
   sc.add_option("-o,--output-path", output_path, "Write output to a file at <path>. [stdout]");
   sc.add_option("--hdist-th", hdist_th, "Maximum Hamming distance for a k-mer to match. [4]")->check(CLI::NonNegativeNumber);
-  sc.add_option("--chisq", chisq, "Chi-square threshold. [3.841]")->check(CLI::NonNegativeNumber);
+  sc.add_option("--chisq", chisq, "Chi-square threshold. [33.00051]")->check(CLI::NonNegativeNumber);
   sc.add_option("-d,--dist-th", dist_th, "Distance threshold(s) - provide exactly 1 or 8 values")->required()->expected(1, 8);
   sc.add_option("-l,--min-length", min_length, "Minimum interval length.")->required()->check(CLI::PositiveNumber);
   sc.add_option("-b,--bin-shift", bin_shift, "Group consecutive k-mers into bins of size 2^b. [0]")
