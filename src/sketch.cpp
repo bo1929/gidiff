@@ -127,6 +127,46 @@ bool Sketch::search_mer_partial(uint32_t rix, enc_t enc_lr, uint32_t& hdist_min)
   return true;
 }
 
+uint32_t Sketch::partial_offset(uint32_t rix) const noexcept
+{
+  const uint32_t rix_res = rix % m;
+  if (frac ? (rix_res > r) : (rix_res != r)) {
+    return std::numeric_limits<uint32_t>::max();
+  }
+  return frac ? (rix / m) * (r + 1) + rix_res : rix / m;
+}
+
+void Sketch::prefetch_offset_inc(uint32_t offset) const noexcept
+{
+  if (offset != std::numeric_limits<uint32_t>::max()) {
+    sfhm->prefetch_inc(offset);
+  }
+}
+
+void Sketch::prefetch_offset_enc(uint32_t offset) const noexcept
+{
+  // inc_v must already be in cache for this to be effective
+  if (offset != std::numeric_limits<uint32_t>::max()) {
+    sfhm->prefetch_enc(offset);
+  }
+}
+
+bool Sketch::scan_bucket(uint32_t offset, enc_t enc_lr, uint32_t& hdist_min) const noexcept
+{
+  if (offset == std::numeric_limits<uint32_t>::max()) return false;
+  const enc_t* ix1 = sfhm->bucket_ptr_start(offset);
+  const enc_t* ix2 = sfhm->bucket_ptr_next(offset);
+  hdist_min = std::numeric_limits<uint32_t>::max();
+  for (; ix1 < ix2; ++ix1) {
+    const uint32_t hd = popcount_lr32((*ix1) ^ enc_lr);
+    if (hd < hdist_min) {
+      hdist_min = hd;
+      if (hd == 0) break; // perfect match, can't improve further
+    }
+  }
+  return true;
+}
+
 std::pair<vec_enc_it, vec_enc_it> Sketch::bucket_indices(uint32_t rix)
 {
   uint32_t offset;

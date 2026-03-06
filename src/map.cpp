@@ -334,26 +334,42 @@ void QIE<T>::search_mers(const char* cseq, uint64_t len, DIM<T>& dim_fw, DIM<T>&
 #ifdef CANONICAL
     if (rcenc64_bp < orenc64_bp) {
       orrix = lshf->compute_hash(orenc64_bp);
+      const uint32_t off_fw = sketch->partial_offset(orrix);
+      sketch->prefetch_offset_inc(off_fw);
+      const enc_t enc_lr_fw = lshf->drop_ppos_lr(orenc64_lr);
+      sketch->prefetch_offset_enc(off_fw);
       uint32_t hdist_fw;
-      if (sketch->search_mer_partial(orrix, lshf->drop_ppos_lr(orenc64_lr), hdist_fw)) {
+      if (sketch->scan_bucket(off_fw, enc_lr_fw, hdist_fw)) {
         dim_fw.aggregate_mer(hdist_fw, bix_j);
       }
     } else {
       rcrix = lshf->compute_hash(rcenc64_bp);
+      const uint32_t off_rc = sketch->partial_offset(rcrix);
+      sketch->prefetch_offset_inc(off_rc);                                  // Phase 1
+      const enc_t enc_lr_rc = lshf->drop_ppos_lr(bp64_to_lr64(rcenc64_bp)); // Phase 2
+      sketch->prefetch_offset_enc(off_rc);                                  // Phase 3
       uint32_t hdist_rc;
-      if (sketch->search_mer_partial(rcrix, lshf->drop_ppos_lr(bp64_to_lr64(rcenc64_bp)), hdist_rc)) {
+      if (sketch->scan_bucket(off_rc, enc_lr_rc, hdist_rc)) {
         dim_rc.aggregate_mer(hdist_rc, bix_j);
       }
     }
 #else
     orrix = lshf->compute_hash(orenc64_bp);
+    rcrix = lshf->compute_hash(rcenc64_bp);
+    const uint32_t off_fw = sketch->partial_offset(orrix);
+    const uint32_t off_rc = sketch->partial_offset(rcrix);
+    sketch->prefetch_offset_inc(off_fw);
+    sketch->prefetch_offset_inc(off_rc);
+    const enc_t enc_lr_fw = lshf->drop_ppos_lr(orenc64_lr);
+    const enc_t enc_lr_rc = lshf->drop_ppos_lr(bp64_to_lr64(rcenc64_bp));
+    sketch->prefetch_offset_enc(off_fw);
+    sketch->prefetch_offset_enc(off_rc);
     uint32_t hdist_fw;
-    if (sketch->search_mer_partial(orrix, lshf->drop_ppos_lr(orenc64_lr), hdist_fw)) {
+    if (sketch->scan_bucket(off_fw, enc_lr_fw, hdist_fw)) {
       dim_fw.aggregate_mer(hdist_fw, bix_j);
     }
-    rcrix = lshf->compute_hash(rcenc64_bp);
     uint32_t hdist_rc;
-    if (sketch->search_mer_partial(rcrix, lshf->drop_ppos_lr(bp64_to_lr64(rcenc64_bp)), hdist_rc)) {
+    if (sketch->scan_bucket(off_rc, enc_lr_rc, hdist_rc)) {
       dim_rc.aggregate_mer(hdist_rc, bix_j);
     }
 #endif /* CANONICAL */

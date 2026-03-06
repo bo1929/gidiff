@@ -18,6 +18,10 @@ public:
   bool check_partial(uint32_t rix);
   uint32_t search_mer(uint32_t rix, enc_t enc_lr);
   bool search_mer_partial(uint32_t rix, enc_t enc_lr, uint32_t& hdist_min);
+  uint32_t partial_offset(uint32_t rix) const noexcept;
+  void prefetch_offset_inc(uint32_t offset) const noexcept;
+  void prefetch_offset_enc(uint32_t offset) const noexcept;
+  bool scan_bucket(uint32_t offset, enc_t enc_lr, uint32_t& hdist_min) const noexcept;
   std::pair<vec_enc_it, vec_enc_it> bucket_indices(uint32_t rix);
   sfhm_sptr_t get_sfhm_sptr();
   lshf_sptr_t get_lshf();
