@@ -49,16 +49,16 @@ OS := $(shell uname -s)
 
 $(info ===== Build mode: $(mode) =====)
 ifeq ($(mode),dynamic)
-	LDLIBS = -lm -lz
+	LDLIBS = -lm -lz -lpthread
 else ifeq ($(mode),static)
-	LDLIBS = -lm -lz
+	LDLIBS = -lm -lz -lpthread
 	ifneq ($(OS),Darwin)
 		LDLIBS += --static -static-libgcc
 	endif
 	LDLIBS += -static-libstdc++ 
 	CURL_SUPPORTED = no
 else
-	LDLIBS = -lm -lz
+	LDLIBS = -lm -lz -lpthread
 endif
 
 ifneq ($(OS),Darwin)
