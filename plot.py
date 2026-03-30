@@ -204,6 +204,7 @@ def prune_tree(tree: Tree, retained: set) -> Tree:
     keep = [leaf for leaf in pruned.iter_leaves() if leaf.name in retained]
     if keep:
         pruned.prune(keep, preserve_branch_length=True)
+        pruned.ladderize()  # Re-ladderize after pruning
     return pruned
 
 
@@ -212,8 +213,16 @@ def get_tip_order(tree: Tree) -> list[str]:
 
 
 def get_retained_leaves(df: pd.DataFrame) -> set:
-    """Leaves that have intervals with different start/end."""
+    """Leaves that have intervals with different start/end (union across all queries)."""
     matched = df[df["INTERVAL_START"] != df["INTERVAL_END"]]
+    return set(matched["REF_ID"].unique())
+
+
+def get_query_retained_leaves(df: pd.DataFrame, query: str) -> set:
+    """Leaves that have intervals with different start/end for the specific query only."""
+    if not query:
+        return set()
+    matched = df[(df["INTERVAL_START"] != df["INTERVAL_END"]) & (df["QUERY_ID"] == query)]
     return set(matched["REF_ID"].unique())
 
 
@@ -1249,7 +1258,7 @@ def build_figure(
             range=ann_y_range,
             tickvals=ann_y_vals,
             ticktext=list(ann_y_text),
-            tickfont=dict(size=10, color="#555"),
+            tickfont=dict(size=12, color="#555"),
             side="right",
             showline=False,
             zeroline=False,
@@ -1430,7 +1439,7 @@ def build_layout(seq_ids, dist_ths, has_pruned, has_strand=False, initial_prune=
             dcc.Store(id="y-range-store"),
             dcc.Store(id="x-range-store"),
             dcc.Store(id="tree-view-store", data="phylogeny"),
-            dcc.Store(id="prune-store", data=initial_prune if has_pruned else False),
+            dcc.Store(id="prune-store", data="pruned" if initial_prune else "full"),
             dcc.Store(id="strand-store", data="both"),
             dcc.Store(id="mode-store", data="focus"),
             dcc.Download(id="download-data"),
@@ -1546,6 +1555,12 @@ def build_layout(seq_ids, dist_ths, has_pruned, has_strand=False, initial_prune=
                                             id="pruned-btn",
                                             n_clicks=0,
                                             style=toggle_style(initial_prune, "left"),
+                                        ),
+                                        html.Button(
+                                            "filtered",
+                                            id="query-btn",
+                                            n_clicks=0,
+                                            style=toggle_style(False, "middle"),
                                         ),
                                         html.Button(
                                             "full",
@@ -1758,6 +1773,11 @@ def create_app(input_path, tree_path, query=None, annotation_path=None):
     retained = get_retained_leaves(df)
     has_pruned = len(retained) > 0
     pruned_tree = prune_tree(full_tree, retained) if has_pruned else None
+    
+    # Query-specific tree (only leaves with matches for current query)
+    query_retained = get_query_retained_leaves(df, query) if query else set()
+    has_query_pruned = len(query_retained) > 0
+    query_tree = prune_tree(full_tree, query_retained) if has_query_pruned else None
 
     def tree_data_for(t, q):
         distances = compute_path_distances(t, q) if q else None
@@ -1777,9 +1797,11 @@ def create_app(input_path, tree_path, query=None, annotation_path=None):
 
     full_data = tree_data_for(full_tree, query)
     pruned_data = tree_data_for(pruned_tree, query) if has_pruned else full_data
+    query_data = tree_data_for(query_tree, query) if has_query_pruned else full_data
 
     full_df = add_tip_order(df, full_data["tip_order"])
     pruned_df = add_tip_order(df, pruned_data["tip_order"]) if has_pruned else full_df
+    query_df = add_tip_order(df, query_data["tip_order"]) if has_query_pruned else full_df
 
     dist_ths = tuple(get_distance_thresholds(df))
     if not dist_ths:
@@ -1790,8 +1812,13 @@ def create_app(input_path, tree_path, query=None, annotation_path=None):
 
     filter_full = make_cached_filter(full_df)
     filter_pruned = make_cached_filter(pruned_df) if has_pruned else filter_full
+    filter_query = make_cached_filter(query_df) if has_query_pruned else filter_full
 
     app = Dash(__name__)
+    
+    # Store the full tree for dynamic query pruning
+    app.full_tree = full_tree
+    app.df = df
     app.layout = build_layout(seq_ids, dist_ths, has_pruned, has_strand=has_strand)
 
     # ---- Navigation callbacks ----
@@ -1886,19 +1913,28 @@ def create_app(input_path, tree_path, query=None, annotation_path=None):
             Output("y-range-store", "data", allow_duplicate=True),
             Output("x-range-store", "data", allow_duplicate=True),
             Input("pruned-btn", "n_clicks"),
+            Input("query-btn", "n_clicks"),
             Input("full-btn", "n_clicks"),
             prevent_initial_call=True,
         )
-        def toggle_prune(pruned, full):
+        def toggle_prune(pruned, filtered, full):
             if ctx.triggered_id == "pruned-btn":
-                return True, None, None
-            return False, None, None
+                return "pruned", None, None
+            elif ctx.triggered_id == "query-btn":
+                return "filtered", None, None
+            return "full", None, None
 
         @app.callback(
-            Output("pruned-btn", "style"), Output("full-btn", "style"), Input("prune-store", "data")
+            Output("pruned-btn", "style"), 
+            Output("query-btn", "style"), 
+            Output("full-btn", "style"), 
+            Input("prune-store", "data")
         )
-        def style_prune(is_pruned):
-            return toggle_style(is_pruned, "left"), toggle_style(not is_pruned, "right")
+        def style_prune(prune_mode):
+            pruned_style = toggle_style(prune_mode == "pruned", "left")
+            query_style = toggle_style(prune_mode == "filtered", "middle")
+            full_style = toggle_style(prune_mode == "full", "right")
+            return pruned_style, query_style, full_style
 
     # ---- Strand toggle ----
     @app.callback(
@@ -1971,18 +2007,35 @@ def create_app(input_path, tree_path, query=None, annotation_path=None):
         Input("prune-store", "data") if has_pruned else State("prune-store", "data"),
     )
     def update_figure(
-        seq_id, focus_val, overlap_val, mode, scheme, y_range, x_range, tree_mode, strand, is_pruned
+        seq_id, focus_val, overlap_val, mode, scheme, y_range, x_range, tree_mode, strand, prune_mode
     ):
         if seq_id is None:
             return go.Figure()
 
         # Select tree data
-        if has_pruned and not is_pruned:
+        if prune_mode == "full":
             cur_data = full_data
             do_filter = filter_full
-        else:
+        elif prune_mode == "pruned":
             cur_data = pruned_data if has_pruned else full_data
             do_filter = filter_pruned if has_pruned else filter_full
+        elif prune_mode == "filtered":
+            # Dynamic filtered-specific pruning
+            query_retained = get_query_retained_leaves(app.df, seq_id)
+            if query_retained:
+                query_tree = prune_tree(app.full_tree, query_retained)
+                query_data_dynamic = tree_data_for(query_tree, seq_id)
+                cur_data = query_data_dynamic
+                # Create filter on the fly for filtered-specific data
+                query_df_dynamic = add_tip_order(app.df, query_data_dynamic["tip_order"])
+                do_filter = make_cached_filter(query_df_dynamic)
+            else:
+                cur_data = full_data
+                do_filter = filter_full
+        else:
+            # Fallback
+            cur_data = full_data
+            do_filter = filter_full
 
         tip_order = cur_data["tip_order"]
         leaf_dist = cur_data["leaf_distances"]
@@ -2057,16 +2110,32 @@ def create_app(input_path, tree_path, query=None, annotation_path=None):
         State("strand-store", "data"),
         prevent_initial_call=True,
     )
-    def export_data(n, seq_id, focus_val, overlap_val, mode, y_rng, x_rng, is_pruned, strand):
+    def export_data(n, seq_id, focus_val, overlap_val, mode, y_rng, x_rng, prune_mode, strand):
         if seq_id is None:
             return no_update
 
-        if has_pruned and not is_pruned:
+        if prune_mode == "full":
             cur_data = full_data
             do_filter = filter_full
-        else:
+        elif prune_mode == "pruned":
             cur_data = pruned_data if has_pruned else full_data
             do_filter = filter_pruned if has_pruned else filter_full
+        elif prune_mode == "filtered":
+            # Dynamic filtered-specific pruning
+            query_retained = get_query_retained_leaves(app.df, seq_id)
+            if query_retained:
+                query_tree = prune_tree(app.full_tree, query_retained)
+                query_data_dynamic = tree_data_for(query_tree, seq_id)
+                cur_data = query_data_dynamic
+                # Create filter on the fly for filtered-specific data
+                query_df_dynamic = add_tip_order(app.df, query_data_dynamic["tip_order"])
+                do_filter = make_cached_filter(query_df_dynamic)
+            else:
+                cur_data = full_data
+                do_filter = filter_full
+        else:
+            cur_data = full_data
+            do_filter = filter_full
 
         if mode == "focus":
             d = nearest_value(focus_val if focus_val is not None else dist_ths[0], dist_ths)

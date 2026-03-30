@@ -56,10 +56,7 @@ AddressSanitizer and ThreadSanitizer
 
 plot.py
 =====
-prune per sequence? Maybe? Optional?
-Make sure that arrows look nice.
 learn more about annotations? Colors?
 Maybe don't ever zoom in on intevarls but show seletion also enable scrolling back mouse motions?
-make compatible with this:  daler.github.io/gffutils/ffutils
 make the input compatbile and header aware.
 ====
