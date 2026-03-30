@@ -2,9 +2,9 @@ import argparse
 import base64
 import importlib.metadata
 import traceback
-import webbrowser
 from collections import defaultdict
 from functools import lru_cache
+from typing import Optional, Union
 
 import numpy as np
 import pandas as pd
@@ -123,23 +123,64 @@ UI_CONTAINER_HEIGHT = "80vh"
 
 # Annotation panel
 ANNOTATION_ROW_HEIGHT = 0.175
-ANNOTATION_TRACK_HEIGHT = 0.20
-ARROW_HEAD_RATIO = 0.2
-ARROW_SIZE_MIN = 4
-ARROW_HEIGHT_MAX = 0.35  # maximum arrow half-height in track units (0.5 max)
+ANNOTATION_TRACK_HEIGHT = 0.25
+ARROW_HEAD_RATIO = 0.125  # smaller head for better proportions
+ARROW_SIZE_MIN = 6
+ARROW_HEIGHT_MAX = 0.40  # maximum arrow half-height in track units (0.5 max)
+ARROW_BODY_HEIGHT_RATIO = 0.6  # body height relative to track height
+ARROW_STEM_WIDTH = 1.5  # width of arrow stem lines
 
+# Biological color scheme (IGV / UCSC Genome Browser conventions)
 FEATURE_COLORS = {
-    "CDS": "#A0522D",
-    "ann": "#4A7C4E",
-    "rRNA": "#B44040",
-    "tRNA": "#CC8800",
-    "misc_RNA": "#7B5EA7",
-    "ncRNA": "#7B5EA7",
-    "regulatory": "#C06020",
-    "exon": "#7A8040",
-    "intron": "#909090",
-    "repeat": "#AA6688",
-    "default": "#606060",
+    # Protein-coding
+    "CDS": "#8B4513",  # saddle brown
+    "gene": "#A0522D",  # sienna
+    "ann": "#4A7C4E",  # muted green (legacy key)
+    # RNA genes
+    "rRNA": "#0066CC",  # bright blue
+    "tRNA": "#9370DB",  # medium purple
+    "ncRNA": "#4682B4",  # steel blue
+    "misc_RNA": "#708090",  # slate gray
+    "snRNA": "#BA55D3",  # medium orchid
+    "snoRNA": "#DDA0DD",  # plum
+    # Regulatory
+    "regulatory": "#228B22",  # forest green
+    "promoter": "#32CD32",  # lime green
+    "enhancer": "#90EE90",  # light green
+    "terminator": "#FF8C00",  # dark orange
+    # Structural
+    "exon": "#FF69B4",  # hot pink
+    "intron": "#C0C0C0",  # silver
+    "UTR": "#FFA07A",  # light salmon
+    "five_prime_UTR": "#FFB6C1",  # light pink
+    "three_prime_UTR": "#FFA07A",  # light salmon
+    # Repetitive / mobile elements
+    "repeat": "#DC143C",  # crimson
+    "transposon": "#8B008B",  # dark magenta
+    "mobile_element": "#9932CC",  # dark orchid
+    # Other
+    "misc_feature": "#808080",
+    "source": "#2F4F4F",
+    "region": "#696969",
+    "gap": "#000000",
+    "default": "#696969",
+}
+
+# Per-feature line width and opacity used in create_annotation_traces
+FEATURE_STYLES = {
+    "CDS": {"line_width": 2.0, "opacity": 0.80},
+    "gene": {"line_width": 2.0, "opacity": 0.80},
+    "rRNA": {"line_width": 1.8, "opacity": 0.75},
+    "tRNA": {"line_width": 1.6, "opacity": 0.75},
+    "ncRNA": {"line_width": 1.4, "opacity": 0.75},
+    "regulatory": {"line_width": 1.5, "opacity": 0.75},
+    "promoter": {"line_width": 1.5, "opacity": 0.75},
+    "exon": {"line_width": 1.8, "opacity": 0.75},
+    "intron": {"line_width": 1.2, "opacity": 0.75},
+    "repeat": {"line_width": 1.6, "opacity": 0.70},
+    "transposon": {"line_width": 1.6, "opacity": 0.75},
+    # fallback
+    "_default": {"line_width": 1.5, "opacity": 0.75},
 }
 
 
@@ -184,7 +225,7 @@ def get_sequence_identifiers(df: pd.DataFrame) -> list:
     return sorted(df["QUERY_ID"].unique())
 
 
-def get_seq_len(df: pd.DataFrame) -> int | None:
+def get_seq_len(df: pd.DataFrame) -> Optional[int]:
     return int(df["SEQ_LEN"].iloc[0]) if not df.empty else None
 
 
@@ -200,8 +241,8 @@ def filter_intervals(
     seq_id: str,
     tip_order: list[str],
     dist_hi: float,
-    dist_lo: float | None = None,
-    strand: str | None = None,
+    dist_lo: Optional[float] = None,
+    strand: Optional[str] = None,
 ) -> pd.DataFrame:
     """Filter intervals by query, distance threshold, and strand."""
     df_q = df[df["QUERY_ID"] == seq_id].copy()
@@ -317,8 +358,8 @@ def _node_hover(node, distances, count_offset=0) -> str:
 
 
 def enforce_min_span(
-    v_range: list | tuple | None, min_span: float, bounds: tuple | None = None
-) -> list | None:
+    v_range: Optional[Union[list, tuple]], min_span: float, bounds: Optional[tuple] = None
+) -> Optional[list]:
     """Clamp zoom range to enforce minimum span and respect bounds.
 
     Ensures that:
@@ -531,25 +572,31 @@ def _parse_gff_attrs(attr_str: str) -> dict:
 
 
 def _is_gff_format(path: str) -> bool:
-    """Heuristic: file is GFF/GTF if first non-comment line has ≥8 columns."""
+    """Heuristic: file is GFF3/GTF if the first non-comment, non-header line
+    has ≥ 9 tab-separated columns and columns 3 and 4 (0-indexed) are integers.
+
+    A plain TSV with a text header is rejected correctly because the header
+    row's 4th and 5th fields ("start" / "stop") are not integers.
+    """
     with open(path) as fh:
         for line in fh:
             line = line.strip()
             if not line or line.startswith("#"):
                 continue
             parts = line.split("\t")
-            if len(parts) >= 8:
-                try:
-                    int(parts[3])
-                    int(parts[4])
-                    return True
-                except ValueError:
-                    pass
-            return False
+            # GFF has at least 9 columns; reject TSVs with text headers early
+            if len(parts) < 9:
+                return False
+            try:
+                int(parts[3])
+                int(parts[4])
+                return True
+            except ValueError:
+                return False
     return False
 
 
-def _load_gff(path: str) -> pd.DataFrame | None:
+def _load_gff(path: str) -> Optional[pd.DataFrame]:
     """Load and normalize GFF3/GTF to internal schema."""
     rows = []
     with open(path) as fh:
@@ -597,19 +644,87 @@ def _load_gff(path: str) -> pd.DataFrame | None:
     return pd.DataFrame(rows) if rows else None
 
 
-def load_annotations(path: str | None) -> pd.DataFrame | None:
-    """Load annotations from GFF, GTF, or custom TSV."""
-    if path is None:
+def _load_gff_with_gffutils(path: str) -> Optional[pd.DataFrame]:
+    """Load GFF3/GTF via gffutils (optional dependency).
+
+    gffutils is imported lazily so its absence doesn't crash the script.
+    Returns None if gffutils is not installed or parsing fails.
+    """
+    try:
+        import gffutils  # noqa: PLC0415 — intentional lazy import
+    except ImportError:
         return None
 
     try:
-        if _is_gff_format(path):
-            return _load_gff(path)
+        db = gffutils.create_db(
+            path,
+            dbfn=":memory:",
+            force=True,
+            keep_order=True,
+            merge_strategy="merge",
+            sort_attribute_values=True,
+        )
 
-        # Custom TSV fallback
-        df = pd.read_csv(path, sep="\t", na_values=["."], keep_default_na=True)
+        rows = []
+        for feature in db.all_features():
+            if feature.start is None or feature.end is None:
+                continue
 
-        # Drop unnamed index column from tools like `cat -n`
+            attrs = dict(feature.attributes)
+
+            def _first(key):
+                v = attrs.get(key, [None])
+                return v[0] if v else None
+
+            locus_tag = (
+                _first("ID")
+                or _first("locus_tag")
+                or _first("Name")
+                or _first("gene")
+                or f"{feature.chrom}_{feature.start}_{feature.end}"
+            )
+
+            rows.append(
+                {
+                    "contig_id": feature.chrom,
+                    "locus_tag": locus_tag,
+                    "ftype": feature.featuretype if feature.featuretype != "." else "misc",
+                    "start": int(feature.start),
+                    "stop": int(feature.end),
+                    "strand": feature.strand if feature.strand in ("+", "-") else "+",
+                    "ann_name": _first("gene")
+                    or _first("ann")
+                    or _first("ann_name")
+                    or _first("Name"),
+                    "product": _first("product") or _first("description") or _first("note"),
+                    "ec_number": _first("ec_number"),
+                    "source": feature.source,
+                    "score": feature.score if feature.score != "." else None,
+                    "frame": feature.frame if feature.frame != "." else None,
+                }
+            )
+
+        return pd.DataFrame(rows) if rows else None
+
+    except Exception as e:
+        print(f"Warning: gffutils parsing failed: {e}")
+        return None
+
+
+def _load_custom_tsv(path: str) -> Optional[pd.DataFrame]:
+    """Load the custom TSV annotation format (e.g. Prokka/SwissProt merged tables).
+
+    Required columns: contig_id, locus_tag, ftype, start, stop, strand.
+    Extra columns (prokka_gene, prokka_EC_number, prokka_product, swissprot_*)
+    are kept as-is; _ann_hover knows how to read them directly.
+
+    Additionally synthesises a unified ``ann_name`` column from whichever
+    source columns are available so downstream code always has one place to look.
+    """
+    try:
+        df = pd.read_csv(path, sep="\t", na_values=[".", ""], keep_default_na=True)
+
+        # Drop unnamed numeric index column sometimes prepended by shell tools
         first_col = df.columns[0]
         if str(first_col) not in {"contig_id", "locus_tag", "ftype", "start", "stop", "strand"}:
             try:
@@ -621,37 +736,93 @@ def load_annotations(path: str | None) -> pd.DataFrame | None:
         required = {"contig_id", "locus_tag", "ftype", "start", "stop", "strand"}
         missing = required - set(df.columns)
         if missing:
-            raise ValueError(f"Missing columns: {', '.join(sorted(missing))}")
+            raise ValueError(f"Missing required columns: {', '.join(sorted(missing))}")
 
         df = df.copy()
+        # Normalise start/stop order
         df["start"] = df[["start", "stop"]].min(axis=1)
         df["stop"] = df[["start", "stop"]].max(axis=1)
 
-        # Coalesce common column variants
-        for target, candidates in [
-            ("product", ["prokka_product", "swissprot_product", "product"]),
-            ("ec_number", ["prokka_EC_number", "swissprot_EC_number", "ec_number"]),
-            ("ann_name", ["prokka_ann", "swissprot_ann", "ann_name", "ann"]),
-        ]:
-            cols = [c for c in candidates if c in df.columns]
-            if cols:
-                df[target] = df[cols].apply(
-                    lambda row: next((v for v in row if pd.notna(v)), None), axis=1
+        # Normalise strand
+        df["strand"] = df["strand"].apply(lambda x: x if x in ("+", "-") else "+")
+
+        # Synthesise a unified ann_name so rendering code has one canonical column
+        if "ann_name" not in df.columns:
+            gene_candidates = ["prokka_gene", "swissprot_gene", "gene"]
+            existing = [c for c in gene_candidates if c in df.columns]
+            if existing:
+                df["ann_name"] = df[existing].apply(
+                    lambda row: next((v for v in row if pd.notna(v) and str(v).strip()), None),
+                    axis=1,
                 )
-            elif target not in df.columns:
-                df[target] = None
+            else:
+                df["ann_name"] = None
+
+        # Synthesise unified ec_number
+        if "ec_number" not in df.columns:
+            ec_candidates = ["prokka_EC_number", "swissprot_EC_number"]
+            existing = [c for c in ec_candidates if c in df.columns]
+            if existing:
+                df["ec_number"] = df[existing].apply(
+                    lambda row: next((v for v in row if pd.notna(v) and str(v).strip()), None),
+                    axis=1,
+                )
+            else:
+                df["ec_number"] = None
+
+        # Synthesise unified product
+        if "product" not in df.columns:
+            prod_candidates = ["prokka_product", "swissprot_product"]
+            existing = [c for c in prod_candidates if c in df.columns]
+            if existing:
+                df["product"] = df[existing].apply(
+                    lambda row: next((v for v in row if pd.notna(v) and str(v).strip()), None),
+                    axis=1,
+                )
+            else:
+                df["product"] = None
 
         return df
 
     except Exception as e:
-        print(f"Warning: Could not load annotation file: {e}")
+        print(f"Warning: custom TSV parsing failed: {e}")
+        traceback.print_exc()
+        return None
+
+
+def load_annotations(path: Optional[str]) -> Optional[pd.DataFrame]:
+    """Load annotations from GFF3, GTF, or custom TSV.
+
+    Routing logic (in order):
+      1. If the file looks like GFF/GTF → try gffutils first (better attribute
+         handling), then fall back to the built-in line parser.
+      2. Otherwise → treat as custom TSV directly; never run gffutils on it.
+
+    gffutils is optional: if it is not installed the GFF path still works via
+    the built-in parser; TSV files are unaffected.
+    """
+    if path is None:
+        return None
+
+    try:
+        if _is_gff_format(path):
+            # Try gffutils (no-op if not installed), then fall back to built-in
+            result = _load_gff_with_gffutils(path)
+            if result is not None:
+                return result
+            return _load_gff(path)
+        else:
+            return _load_custom_tsv(path)
+
+    except Exception as e:
+        print(f"Warning: could not load annotation file '{path}': {e}")
         traceback.print_exc()
         return None
 
 
 def filter_annotations(
-    df: pd.DataFrame | None, query_id: str, x_range: tuple | None = None
-) -> pd.DataFrame | None:
+    df: Optional[pd.DataFrame], query_id: str, x_range: Optional[tuple] = None
+) -> Optional[pd.DataFrame]:
     """Filter annotations by contig and optionally by genomic position."""
     if df is None:
         return None
@@ -673,10 +844,12 @@ def filter_annotations(
 
 
 def create_ann_arrow(start, end, strand, y_center, height=None):
-    """Create polygon vertices for a direction-aware ann arrow.
+    """Create polygon vertices for a direction-aware gene arrow.
 
-    For long anns, the arrow height is capped at ARROW_HEIGHT_MAX to prevent
-    arrows from exceeding track boundaries. The body remains proportionally sized.
+    Arrow height is capped at ARROW_HEIGHT_MAX to prevent overflow into
+    adjacent tracks.  The body/head ratio follows ARROW_BODY_HEIGHT_RATIO.
+    Feature-specific styling (line_width, opacity) is applied by the caller
+    via FEATURE_STYLES so this function stays pure-geometry.
     """
     if height is None:
         height = ANNOTATION_TRACK_HEIGHT
@@ -684,13 +857,14 @@ def create_ann_arrow(start, end, strand, y_center, height=None):
     length = max(end - start, 1)
     arrow_size = max(ARROW_SIZE_MIN, length * ARROW_HEAD_RATIO)
 
-    # Calculate heights, but cap to prevent overflow into adjacent tracks
-    h = min(height * 1.5, ARROW_HEIGHT_MAX)  # body half-height (capped)
-    H = min(height * 2.0, ARROW_HEIGHT_MAX)  # arrowhead half-height (capped)
+    # Body half-height and arrowhead half-height, both capped at ARROW_HEIGHT_MAX
+    h = min(height * ARROW_BODY_HEIGHT_RATIO, ARROW_HEIGHT_MAX)  # body
+    H = min(height * 0.80, ARROW_HEIGHT_MAX)  # head
 
     if strand == "+":
         body_end = end - arrow_size
         if body_end <= start:
+            # Gene too short for a body — draw a simple triangle
             x = [start, end, start, start]
             y = [y_center - H, y_center, y_center + H, y_center - H]
         else:
@@ -727,46 +901,73 @@ def create_ann_arrow(start, end, strand, y_center, height=None):
 
 
 def _ann_hover(ann_row) -> str:
-    """Build rich HTML hover text for a ann showing only main fields."""
+    """Build rich HTML hover text for a feature annotation."""
     length = int(ann_row["stop"]) - int(ann_row["start"])
+    strand_symbol = "→" if ann_row["strand"] == "+" else "←"
 
-    hover_text = ""
-    hover_text += f"{ann_row['locus_tag']}"
-    hover_text += f"<br>{ann_row['ftype']}"
-    hover_text += f"<br>{int(ann_row['start']):,}–{int(ann_row['stop']):,}"
-    hover_text += f"<br>{length:,} bp · {ann_row['strand']}"
+    hover_text = f"<b>{ann_row['locus_tag']}</b>"
+    hover_text += f"<br><i>{ann_row['ftype']}</i>"
+    hover_text += f"<br>Position: {int(ann_row['start']):,} – {int(ann_row['stop']):,}"
+    hover_text += f"<br>Length: {length:,} bp  {ann_row['strand']} {strand_symbol}"
 
+    # Gene name — first non-null across candidate columns
     ann_name = None
-    if "ann_name" in ann_row and pd.notna(ann_row["ann_name"]):
-        ann_name = ann_row["ann_name"]
-    elif "prokka_ann" in ann_row and pd.notna(ann_row["prokka_ann"]):
-        ann_name = ann_row["prokka_ann"]
+    for col in ["ann_name", "prokka_gene", "swissprot_gene", "gene"]:
+        if col in ann_row and pd.notna(ann_row[col]):
+            ann_name = ann_row[col]
+            break
     if ann_name:
-        hover_text += f"<br>Gene: {ann_name}"
+        hover_text += f"<br><b>Gene:</b> {ann_name}"
 
+    # EC number — prefer prokka, then swissprot, then generic
     ec_number = None
-    if "ec_number" in ann_row and pd.notna(ann_row["ec_number"]):
-        ec_number = ann_row["ec_number"]
-    elif "prokka_EC_number" in ann_row and pd.notna(ann_row["prokka_EC_number"]):
-        ec_number = ann_row["prokka_EC_number"]
+    for col in ["ec_number", "prokka_EC_number", "swissprot_EC_number"]:
+        if col in ann_row and pd.notna(ann_row[col]):
+            ec_number = ann_row[col]
+            break
     if ec_number:
-        hover_text += f"<br>EC: {ec_number}"
+        hover_text += f"<br><b>EC:</b> {ec_number}"
 
+    # Product description
     product = None
-    if "product" in ann_row and pd.notna(ann_row["product"]):
-        product = ann_row["product"]
-    elif "prokka_product" in ann_row and pd.notna(ann_row["prokka_product"]):
-        product = ann_row["prokka_product"]
+    for col in ["product", "prokka_product", "swissprot_product", "description"]:
+        if col in ann_row and pd.notna(ann_row[col]):
+            product = ann_row[col]
+            break
     if product:
-        if len(str(product)) > 100:
-            product = str(product)[:97] + "…"
-        hover_text += f"<br>Product: {product}"
+        product = str(product)
+        if len(product) > 120:
+            product = product[:117] + "…"
+        hover_text += f"<br><b>Product:</b> {product}"
+
+    # Functional annotations (COG/eggNOG, KEGG KO, Pfam) — shown if present
+    extras = []
+    for col in ["swissprot_eggNOG", "eggNOG", "cog"]:
+        if col in ann_row and pd.notna(ann_row[col]):
+            extras.append(f"COG: {ann_row[col]}")
+            break
+    for col in ["swissprot_KO", "KO", "kegg_ko"]:
+        if col in ann_row and pd.notna(ann_row[col]):
+            extras.append(f"KO: {ann_row[col]}")
+            break
+    pfam_vals = []
+    for col in ["swissprot_Pfam", "Pfam", "pfam"]:
+        if col in ann_row and pd.notna(ann_row[col]):
+            pfam_vals = [d.strip() for d in str(ann_row[col]).split(",") if d.strip()]
+            break
+    if pfam_vals:
+        pfam_text = ", ".join(pfam_vals[:3])
+        if len(pfam_vals) > 3:
+            pfam_text += f" (+{len(pfam_vals) - 3})"
+        extras.append(f"Pfam: {pfam_text}")
+    if extras:
+        hover_text += "<br>" + " | ".join(extras[:3])
 
     return hover_text
 
 
 def create_annotation_traces(df, x_range=None):
-    """Create Plotly traces for annotation tracks with proper hover support."""
+    """Create Plotly traces for annotation tracks with feature-specific styling."""
     if df is None or df.empty:
         return [], [], [], 0
 
@@ -778,6 +979,7 @@ def create_annotation_traces(df, x_range=None):
 
     for ftype in ftypes:
         color = FEATURE_COLORS.get(ftype, FEATURE_COLORS["default"])
+        style = FEATURE_STYLES.get(ftype, FEATURE_STYLES["_default"])
         y_center = ftype_to_y[ftype]
 
         for _, ann in df[df["ftype"] == ftype].sort_values("start").iterrows():
@@ -785,10 +987,9 @@ def create_annotation_traces(df, x_range=None):
                 continue
 
             arrow = create_ann_arrow(int(ann["start"]), int(ann["stop"]), ann["strand"], y_center)
-
             hover_text = _ann_hover(ann)
 
-            # Arrow body (filled, no hover) - remove name to avoid interference
+            # Arrow body (filled polygon, hover disabled — avoids trace-name clutter)
             traces.append(
                 go.Scatter(
                     x=arrow["x"],
@@ -796,31 +997,29 @@ def create_annotation_traces(df, x_range=None):
                     mode="lines",
                     fill="toself",
                     fillcolor=color,
-                    line=dict(color=color, width=0.8),
+                    line=dict(color=color, width=style["line_width"]),
                     hoverinfo="skip",
                     showlegend=False,
-                    opacity=0.82,
+                    opacity=style["opacity"],
                     name="",
                 )
             )
 
-            # Hover detection point (center of ann) - small but detectable
+            # Invisible centre point that carries the hover tooltip
             ann_center = (int(ann["start"]) + int(ann["stop"])) / 2
             traces.append(
                 go.Scatter(
                     x=[ann_center],
                     y=[y_center],
                     mode="markers",
-                    marker=dict(
-                        size=10, opacity=0.2, color=color
-                    ),  # More visible for hover detection
+                    marker=dict(size=10, opacity=0.2, color=color),
                     hoverinfo="text",
-                    text=[hover_text],  # Pass as list to ensure proper formatting
+                    text=[hover_text],
                     hoverlabel=dict(
                         namelength=-1,
                         bgcolor="rgba(255, 255, 255, 0.95)",
                         font=dict(size=12, family="Arial, sans-serif", color="#1a1a1a"),
-                        bordercolor="#ccc",
+                        bordercolor=color,
                     ),
                     showlegend=False,
                     name="",
@@ -1024,7 +1223,7 @@ def build_figure(
         ann_y_range = [-0.5, max(ann_n - 0.5, 0.5)]
 
         fig.update_xaxes(
-            title="Genomic Position (bp)",
+            title="Genomic (bp)",
             title_font=dict(size=AXIS_TITLE_SIZE),
             range=x_range,
             tickmode="auto",
