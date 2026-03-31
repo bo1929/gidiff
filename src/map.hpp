@@ -50,14 +50,14 @@ private:
   uint64_t merhit_count = 0;
   uint64_t mermiss_count = 0;
   vec<uint64_t> hdisthist_v;
-  // T fdt;
-  // Tsdt;
-  vec<T> fdc_v;
-  vec<T> sdc_v;
-  vec<T> fdps_v;
-  vec<T> sdps_v;
-  vec<T> fdpmax_v;
-  vec<T> fdsmin_v;
+  // T fdt; // To keep the total in case fw/rc decision is needed.
+  // T sdt; // Not sure if this is needeed even for fw/rc decision.
+  vec<T> fdc_v;    // The f' contribution c_i of the k-mer (bin) starting at i
+  vec<T> sdc_v;    // The f'' contribution s_i of the k-mer (bin) starting at i
+  vec<T> fdps_v;   // C[i] = sum(c_0, ..., c_{i}), C[0] = 0 (length n) (shifted by 1 w.r.t. fdc_v)
+  vec<T> sdps_v;   // S[i] = sum(s_0, ..., s_{i}), S[0] = 0 (length n) (shifted by 1 w.r.t. sdc_v)
+  vec<T> fdpmax_v; // H[i] = max(C_1, ..., C_{i}), H_0 = -inf, H_{n+1} = inf (length n+1) TODO: Remove?
+  vec<T> fdsmin_v; // L[i] = min(C_{i}, ..., C_n), L_0 = inf, H_{n+1}= -inf (length n+1) TODO: Remove?
   arr<vec<interval_t>, WIDTH> rintervals_v;
   arr<vec<interval_t>, WIDTH> eintervals_v;
   arr<vec<double>, WIDTH> chisq_v;

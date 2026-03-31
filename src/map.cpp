@@ -10,14 +10,14 @@ DIM<T>::DIM(llh_sptr_t<T> llhf, uint32_t hdist_th, uint64_t n)
 {
   hdisthist_v.resize(hdist_th + 1, 0);
 
-  // fdc_v.reserve(n);
-  // sdc_v.reserve(n);
-  fdc_v.resize(n);
-  sdc_v.resize(n);
+  fdc_v.resize(n); // ?: fdc_v.reserve(n);
+  sdc_v.resize(n); // ?: sdc_v.reserve(n);
+
   fdps_v.reserve(n + 1);
   sdps_v.reserve(n + 1);
-  fdpmax_v.reserve(n + 2);
-  fdsmin_v.reserve(n + 2);
+
+  fdpmax_v.reserve(n + 2); // TODO: Remove?
+  fdsmin_v.reserve(n + 2); // TODO: Remove?
 
   // This is for deciding between fw and rc.
   // if constexpr (std::is_same_v<T, double>) {
@@ -56,6 +56,7 @@ void DIM<T>::aggregate_mer(uint32_t hdist_min, uint64_t i)
   }
 
   // This is for deciding between fw and rc.
+  // Not needed if we want to find intervals for both.
   // if constexpr (std::is_same_v<T, double>) {
   //   // fdt += fdc_v.back();
   //   // sdt += sdc_v.back();
@@ -83,6 +84,44 @@ void DIM<T>::release_accumulators() noexcept
 }
 
 template<typename T>
+void DIM<T>::extract_intervals(const uint64_t tau, const size_t idx)
+{
+  uint64_t b_curr = 1;
+  uint64_t b_prev = std::numeric_limits<uint64_t>::max(); // no interval yet
+
+  for (uint64_t a = 1; a <= n; ++a) {
+    const double fdpmax_a = at(fdpmax_v[a - 1], idx);
+    const double fdps_a = at(fdps_v[a], idx);
+
+    if (fdpmax_a >= fdps_a) {
+      continue; // a is a prefix maxima of the prefix sum
+    }
+
+    while ((b_curr + 1) <= n && (at(fdsmin_v[b_curr + 1], idx) < fdps_a)) {
+      ++b_curr; // Right maximal
+    } // We increment b_curr to the last b with fdsmin_v[b] < fdps_a
+    // There is no other a*>a where b*<b, so no valid (a, b) is missed
+
+    const uint64_t b_star = b_curr;
+    if (b_star < (a + tau)) {
+      continue; // No valid right endpoint in [a+tau, n]
+    }
+    if (at(fdps_v[b_star], idx) >= fdps_a) {
+      continue; // Negative-sum check
+    }
+    // if (__builtin_expect(b_star == b_prev, 0)) {
+    if (b_star == b_prev) {
+      continue; // An earlier (leftmost) a already claimed this b*
+    }
+
+    if (at(fdps_v[b_star], idx) >= fdpmax_a) { // Left maximal
+      rintervals_v[idx].emplace_back(a, b_star);
+      b_prev = b_star;
+    }
+  }
+}
+
+template<typename T>
 void DIM<T>::inclusive_scan()
 {
   assert(n > 0);
@@ -90,8 +129,8 @@ void DIM<T>::inclusive_scan()
 
   fdps_v.resize(s);
   sdps_v.resize(s);
-  fdpmax_v.resize(s + 1);
-  fdsmin_v.resize(s + 1);
+  fdpmax_v.resize(s + 1); // TODO: Remove?
+  fdsmin_v.resize(s + 1); // TODO: Remove?
 
   if constexpr (std::is_same_v<T, double>) {
     fdps_v[0] = 0.0;
@@ -101,14 +140,16 @@ void DIM<T>::inclusive_scan()
       sdps_v[i] = sdps_v[i - 1] + sdc_v[i - 1];
     }
 
+    // TODO: Remove both?
     fdpmax_v.front() = -std::numeric_limits<double>::max();
+    fdsmin_v.front() = std::numeric_limits<double>::max();
     std::inclusive_scan(
-      fdps_v.begin(), fdps_v.end(), fdpmax_v.begin() + 1, [](double a, double b) { return std::max(a, b); });
-
-    fdsmin_v.back() = std::numeric_limits<double>::max();
+      fdps_v.begin() + 1, fdps_v.end(), fdpmax_v.begin() + 1, [](double a, double b) { return std::max(a, b); });
     std::inclusive_scan(
-      fdps_v.rbegin(), fdps_v.rend(), fdsmin_v.rbegin() + 1, [](double a, double b) { return std::min(a, b); });
-
+      fdps_v.rbegin(), fdps_v.rend() - 1, fdsmin_v.rbegin() + 1, [](double a, double b) { return std::min(a, b); });
+    fdpmax_v.back() = std::numeric_limits<double>::max();
+    fdsmin_v.back() = -std::numeric_limits<double>::max();
+    // Until here?
   } else {
     fdps_v[0].fill(0.0);
     sdps_v[0].fill(0.0);
@@ -123,60 +164,22 @@ void DIM<T>::inclusive_scan()
       simde_mm512_store_pd(sdps_v[i].data(), sdps_acc);
     }
 
+    // TODO: Remove too?
     fdpmax_v[0].fill(-std::numeric_limits<double>::max());
+    fdsmin_v[0].fill(std::numeric_limits<double>::max());
     simde__m512d fdpmax_acc = simde_mm512_load_pd(fdpmax_v[0].data());
-    for (uint64_t i = 0; i < s; ++i) {
-      const simde__m512d fdps = simde_mm512_load_pd(fdps_v[i].data());
-      fdpmax_acc = simde_mm512_max_pd(fdpmax_acc, fdps);
-      simde_mm512_store_pd(fdpmax_v[i + 1].data(), fdpmax_acc);
+    simde__m512d fdsmin_acc = simde_mm512_load_pd(fdsmin_v[0].data());
+    for (uint64_t i = 1; i < s; ++i) {
+      const simde__m512d fdps_front = simde_mm512_load_pd(fdps_v[i].data());
+      const simde__m512d fdps_back = simde_mm512_load_pd(fdps_v[s - i].data());
+      fdpmax_acc = simde_mm512_max_pd(fdpmax_acc, fdps_front);
+      fdsmin_acc = simde_mm512_min_pd(fdsmin_acc, fdps_back);
+      simde_mm512_store_pd(fdpmax_v[i].data(), fdpmax_acc);
+      simde_mm512_store_pd(fdsmin_v[s - i].data(), fdsmin_acc);
     }
-
-    uint64_t j = s;
-    fdsmin_v[j].fill(std::numeric_limits<double>::max());
-    simde__m512d fdsmin_acc = simde_mm512_load_pd(fdsmin_v[j].data());
-    for (uint64_t i = 0; i < s; ++i) {
-      j = s - i - 1;
-      const simde__m512d fdps = simde_mm512_load_pd(fdps_v[j].data());
-      fdsmin_acc = simde_mm512_min_pd(fdsmin_acc, fdps);
-      simde_mm512_store_pd(fdsmin_v[j].data(), fdsmin_acc);
-    }
-  }
-}
-
-template<typename T>
-void DIM<T>::extract_intervals(const uint64_t tau, const size_t idx)
-{
-  for (uint64_t a = 1, b = 1; a <= n; ++a) {
-    const double fdpmax_a = at(fdpmax_v[a - 1], idx);
-    const double fdps_a = at(fdps_v[a], idx);
-
-    if (fdpmax_a >= fdps_a) {
-      continue;
-    }
-
-    if (b < (a + tau)) {
-      b = a + tau - 1;
-    }
-    if (__builtin_expect(b > n, 0)) {
-      break;
-    }
-
-    if (at(fdsmin_v[b + 1], idx) >= at(fdps_v[a], idx)) {
-      continue;
-    }
-
-    b++;
-    while (b <= n) {
-      const double fdps_b = at(fdps_v[b], idx);
-      const bool negative_sum = fdps_b < fdps_a;
-      const bool left_maximal = fdpmax_a <= fdps_b;
-      const bool right_maximal = fdps_a <= at(fdsmin_v[b + 1], idx);
-      if (negative_sum && left_maximal && right_maximal) {
-        rintervals_v[idx].emplace_back(a, b);
-        break;
-      }
-      b++;
-    }
+    fdpmax_v[s].fill(std::numeric_limits<double>::max());
+    fdsmin_v[s].fill(-std::numeric_limits<double>::max());
+    // Until here.
   }
 }
 
@@ -270,13 +273,7 @@ void QIE<T>::map_sequences(std::ostream& sout, const str& rid)
     const uint64_t len = seq_batch[bix].size();
     onmers = 0;
     if (len < static_cast<uint64_t>(k)) {
-      // const uint64_t n = len;
-      // if constexpr (std::is_same_v<T, double>) {
-      //   sout << WRITE_CINTERVAL(qid_batch[bix], n, n, n, "+", rid, at(params.dist_th, 0)) << '\n';
-      // } else {
-      //   for (size_t idx = 0; idx < WIDTH; ++idx)
-      //     sout << WRITE_CINTERVAL(qid_batch[bix], n, n, n, "+", rid, at(params.dist_th, idx)) << '\n';
-      // }
+      // TODO: Do we want to have a more verbose mode with this reported?
       continue;
     }
     enmers = len - k + 1;
