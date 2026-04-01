@@ -98,6 +98,7 @@ private:
   uint64_t min_length = 0;
   uint64_t bin_shift = 0;
   double chisq = 33.00051; // 1e-10
+  bool segment = false;
   std::vector<double> dist_th;
 };
 

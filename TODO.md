@@ -1,27 +1,24 @@
-distil
-dimes
-grind
-grid
-drip
-dint
-gdip
-plint
-glint
-hind
-gind
-ping
-pind
-joint
-mint
-pint
-hint
-lint
-paint
-point
-dint
-rind
-digit
+## names
 digg
+digit
+dimes
+dint
+distil
+drip
+gdiff
+gdip
+gind
+glint
+grid
+grind
+mint
+paint
+pind
+ping
+pint
+plint
+point
+rind
 
 Save positions of k-mers and query sketch to skecht for this youu need metadata (len). just do rho1*rho2?
 Sketch to sketch?
@@ -60,3 +57,64 @@ learn more about annotations? Colors?
 Maybe don't ever zoom in on intevarls but show seletion also enable scrolling back mouse motions?
 make the input compatbile and header aware.
 ====
+
+
+=====
+### Correctness of the algorithm:
+For an interval (a, b) to be maximal (not properly contained in any larger negative-sum interval):
+
+Left endpoint must be a running max: If ∃ a' < a with fdps_v[a'] >= fdps_v[a], then (a', b) has sum fdps_v[b] - fdps_v[a'] <= fdps_v[b] - fdps_v[a] < 0. So (a', b) also has negative sum and properly contains (a, b) → not maximal.
+Right endpoint must be the farthest: If ∃ b' > b with (a, b') negative, then (a, b') properly contains (a, b) → not maximal.
+Algorithm Correctness
+The algorithm does exactly this:
+
+Line 96-98: Only considers a where fdps_v[a] > fdpmax_v[a-1] (running maxima)
+Lines 100-102: Finds rightmost b_star where (a, b_star) could have negative sum (using suffix minima)
+Line 109-111: Verifies (a, b_star) actually has negative sum
+Line 113-115: b_prev tracking ensures each b_star is claimed by the leftmost valid a
+Line 117: Left-maximality check confirms no (a', b_star) with a' < a has negative sum
+Linear Time
+Outer loop: O(n)
+b_curr only increases (never resets), total increments ≤ n−1
+Total: O(n)
+Verification with Counterexample
+My earlier example fdc_v = [1, -3, 2, -1]:
+
+(3, 4) has sum = −1, but (1, 4) also has negative sum and contains (3, 4)
+So (3, 4) is NOT maximal under your definition
+The algorithm correctly outputs only (1, 4) ✓
+Conclusion
+The algorithm is correct for finding all maximal (not contained in larger) negative-sum intervals in O(n) time. The comments are somewhat misleading (e.g., "a is a prefix maxima" should say "skip if a is NOT a new record high"), but the logic is sound.
+#### Completeness
+Yes, it finds **all** maximal intervals. Here's the proof:
+
+### Completeness Proof
+
+Let `(a*, b*)` be any maximal negative-sum interval. We show the algorithm outputs it.
+
+**Step 1**: `a*` must be a running maximum.
+- If not, `∃ a' < a*` with `fdps_v[a'] ≥ fdps_v[a*]`
+- Then `(a', b*)` has sum ≤ `(a*, b*)` sum < 0
+- So `(a', b*)` contains `(a*, b*)` with negative sum → contradicts maximality
+
+**Step 2**: `b*` must equal `b_star` (the rightmost found by the algorithm for `a*`).
+- `b_star` = rightmost `b` where `(a*, b)` has negative sum
+- If `b* < b_star`, then `(a*, b_star)` contains `(a*, b*)` with negative sum → contradicts maximality
+- So `b* = b_star`
+
+**Step 3**: The `b_prev` check passes.
+- If `b_prev == b*`, some earlier `a < a*` claimed `b*`
+- That means `(a, b*)` was output, which contains `(a*, b*)` with negative sum → contradicts maximality
+- So `b_prev ≠ b*`
+
+**Step 4**: The left-maximality check passes.
+- If `fdps_v[b*] < fdpmax_v[a*-1]`, then `∃ a' < a*` with `fdps_v[a'] > fdps_v[b*]`
+- So `(a', b*)` has negative sum and contains `(a*, b*)` → contradicts maximality
+- So the check passes
+
+**Conclusion**: All checks pass → `(a*, b*)` is output. ∎
+
+---
+The algorithm is **complete**: every maximal interval is found, none are missed.
+======
+

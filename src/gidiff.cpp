@@ -37,7 +37,11 @@ bool MapSC::validate_configuration()
 
 void MapSC::write_header()
 {
-  (*output_stream) << "QUERY_ID\tSEQ_LEN\tINTERVAL_START\tINTERVAL_END\tSTRAND\tREF_ID\tDIST_TH\n";
+  if (segment) {
+    (*output_stream) << "QUERY_ID\tSEQ_LEN\tINTERVAL_START\tINTERVAL_END\tSTRAND\tREF_ID\tDIST\tMASK\n";
+  } else {
+    (*output_stream) << "QUERY_ID\tSEQ_LEN\tINTERVAL_START\tINTERVAL_END\tSTRAND\tREF_ID\tDIST_TH\n";
+  }
 }
 
 void MapSC::map()
@@ -69,8 +73,8 @@ void MapSC::map()
   }
   sketch_stream.close();
 
-  params_t<double> params_single = {dist_th.size(), dist_th.front(), hdist_th, min_length, chisq, bin_shift};
-  params_t<cm512_t> params_multiple = {dist_th.size(), {0}, hdist_th, min_length, chisq, bin_shift};
+  params_t<double> params_single = {dist_th.size(), dist_th.front(), hdist_th, min_length, chisq, bin_shift, segment};
+  params_t<cm512_t> params_multiple = {dist_th.size(), {0}, hdist_th, min_length, chisq, bin_shift, segment};
   std::copy(dist_th.begin(), dist_th.end(), params_multiple.dist_th.begin());
 
   // Per-sketch result buffers
@@ -247,6 +251,7 @@ MapSC::MapSC(CLI::App& sc)
   sc.add_option("-l,--min-length", min_length, "Minimum interval length.")->required()->check(CLI::PositiveNumber);
   sc.add_option("-b,--bin-shift", bin_shift, "Group consecutive k-mers into bins of size 2^b. [0]")
     ->check(CLI::NonNegativeNumber);
+  sc.add_flag("--segment,!--no-segment", segment, "Output contiguous segments with MLE distances. [false]");
   sc.callback([&]() {
     if (!validate_configuration()) {
       error_exit("Invalid configuration!");

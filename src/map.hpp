@@ -1,6 +1,7 @@
 #ifndef _MAP_H
 #define _MAP_H
 
+#include <algorithm>
 #include <simde/x86/avx512.h>
 #include "llh.hpp"
 #include "lshf.hpp"
@@ -12,12 +13,23 @@
 #include "exthash.hpp"
 
 template<typename T>
+class QIE;
+
+struct segment_t
+{
+  uint64_t start;
+  uint64_t end;
+  double d_llh;
+  uint8_t mask;     // bitmask: bit i set iff threshold i hits this segment
+};
+
+template<typename T>
 class DIM
 {
   static constexpr size_t WIDTH = std::is_same_v<T, double> ? 1 : RWIDTH;
 
 public:
-  DIM(llh_sptr_t<T> llhf, uint32_t hdist_th, uint64_t n);
+  DIM(llh_sptr_t<T> llhf, uint32_t hdist_th, uint64_t nbins, uint64_t nmers, bool segment = false);
   // T get_fdt() const { return fdt; }
   // T get_sdt() const { return sdt; }
   static inline double at(T v, size_t idx);
@@ -31,6 +43,13 @@ public:
   void extract_intervals(uint64_t tau, size_t idx = 0);
   uint64_t expand_intervals(double chisq_th, size_t idx = 0);
   interval_t get_interval(uint64_t i, size_t idx = 0);
+  uint64_t get_nbins() const { return nbins; }
+  uint64_t get_nmers() const { return nmers; }
+  void build_hpsum();
+  double estimate_interval_distance(uint64_t a, uint64_t b, uint64_t bin_shift);
+  void map_contiguous_segments(uint64_t bin_shift);
+  const vec<uint64_t>& get_hdisthist() const { return hdisthist_v; }
+  const vec<segment_t>& get_segments() const { return segments; }
   static inline void add_to(T& dest, const T& src)
   {
     if constexpr (std::is_same_v<T, double>) {
@@ -45,11 +64,12 @@ public:
 
 private:
   const llh_sptr_t<T> llhf;
-  const uint64_t n; // array size: nbins when binning, enmers when bin_len=1
+  const uint64_t nbins;   // number of bins
+  const uint64_t nmers;   // number of k-mers in query (for per-k-mer hdist tracking)
   const uint32_t hdist_th;
+  const bool segment;
   uint64_t merhit_count = 0;
   uint64_t mermiss_count = 0;
-  vec<uint64_t> hdisthist_v;
   // T fdt; // To keep the total in case fw/rc decision is needed.
   // T sdt; // Not sure if this is needeed even for fw/rc decision.
   vec<T> fdc_v;    // The f' contribution c_i of the k-mer (bin) starting at i
@@ -63,6 +83,8 @@ private:
   arr<vec<double>, WIDTH> chisq_v;
   double d_llh = std::numeric_limits<double>::quiet_NaN();
   double v_llh = std::numeric_limits<double>::quiet_NaN();
+  vec<uint64_t> hdisthist_v; // [(nbins+1) × (hdist_th+1)] row-major; row 0 = zeros; accumulate into rows 1..nbins, build_hpsum() converts in-place to prefix sums
+  vec<segment_t> segments;
 };
 
 template<typename T>
@@ -77,6 +99,7 @@ public:
 private:
   void search_mers(const char* cseq, uint64_t len, DIM<T>& or_summary, DIM<T>& rc_summary);
   void report_intervals(std::ostream& sout, const str& rid, DIM<T>& dim, bool rc, size_t idx = 0);
+  void report_segments(std::ostream& sout, const str& rid, const DIM<T>& dim, bool rc);
   static inline double at(T v, size_t idx);
 
   const sketch_sptr_t sketch;

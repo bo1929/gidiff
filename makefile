@@ -1,6 +1,7 @@
 # compiler options
 #--------------------------------------------
 COMPILER ?= g++
+
 mode ?= dynamic  # Default to dynamic linking
 mdebug ?= no
 
@@ -15,7 +16,8 @@ CXXFLAGS = -std=c++17 -O3 \
 
 WFLAGS += -Wno-unused-result -Wno-unused-command-line-argument -Wno-undefined-inline
 
-INC = -I simde
+INC = -I simde \
+			-Iexternal/boost/libs/math/include
 
 # project files
 #--------------------------------------------
@@ -49,20 +51,20 @@ OS := $(shell uname -s)
 
 $(info ===== Build mode: $(mode) =====)
 ifeq ($(mode),dynamic)
-	LDLIBS = -lm -lz -lpthread
+	LDFLAGS = -lm -lz -lpthread
 else ifeq ($(mode),static)
-	LDLIBS = -lm -lz -lpthread
+	LDFLAGS = -lm -lz -lpthread
 	ifneq ($(OS),Darwin)
-		LDLIBS += --static -static-libgcc
+		LDFLAGS += --static -static-libgcc
 	endif
-	LDLIBS += -static-libstdc++ 
+	LDFLAGS += -static-libstdc++ 
 	CURL_SUPPORTED = no
 else
-	LDLIBS = -lm -lz -lpthread
+	LDFLAGS = -lm -lz -lpthread
 endif
 
 ifneq ($(OS),Darwin)
-	LDLIBS += -lstdc++ -lstdc++fs
+	LDFLAGS += -lstdc++ -lstdc++fs
 endif
 
 ifeq ($(mdebug),yes)
@@ -72,7 +74,7 @@ endif
 LCURL = 0
 ifneq ($(CURL_SUPPORTED),no)
 	ifneq ($(mode),static)
-		LDLIBS += -lcurl
+		LDFLAGS += -lcurl
 		LCURL = 1
 	endif
 endif
@@ -90,10 +92,10 @@ endif
 # generic rule for compiling *.cpp -> *.o
 build/%.o: src/%.cpp
 	@mkdir -p build
-	$(COMPILER) -c src/$*.cpp -o build/$*.o $(WFLAGS) $(CXXFLAGS) $(LDLIBS) $(VARDEF) $(INC)
+	$(COMPILER) -c src/$*.cpp -o build/$*.o $(WFLAGS) $(CXXFLAGS) $(LDFLAGS) $(VARDEF) $(INC)
 
 $(PROGRAM): $(OBJECTS)
-	$(COMPILER) -o $@ $(WFLAGS) $(CXXFLAGS) $+ $(LDLIBS) $(VARDEF) $(LDFLAGS) $(INC)
+	$(COMPILER) -o $@ $(WFLAGS) $(CXXFLAGS) $+ $(LDFLAGS) $(VARDEF) $(INC)
 
 clean:
 	rm -f $(PROGRAM) $(OBJECTS)
