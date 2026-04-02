@@ -125,15 +125,15 @@ void DIM<T>::extrema_scan(const uint64_t tau, const size_t idx)
   } else {
     fdpmax_v[0].fill(-std::numeric_limits<double>::max());
     fdsmin_v[0].fill(std::numeric_limits<double>::max());
-    simde__m512d fdpmax_acc = simde_mm512_load_pd(fdpmax_v[0].data());
-    simde__m512d fdsmin_acc = simde_mm512_load_pd(fdsmin_v[0].data());
+    simde__m512d fdpmax_acc = simde_mm512_loadu_pd(fdpmax_v[0].data());
+    simde__m512d fdsmin_acc = simde_mm512_loadu_pd(fdsmin_v[0].data());
     for (uint64_t i = 1; i < s; ++i) {
-      const simde__m512d fdps_front = simde_mm512_load_pd(fdps_v[i].data());
-      const simde__m512d fdps_back = simde_mm512_load_pd(fdps_v[s - i].data());
+      const simde__m512d fdps_front = simde_mm512_loadu_pd(fdps_v[i].data());
+      const simde__m512d fdps_back = simde_mm512_loadu_pd(fdps_v[s - i].data());
       fdpmax_acc = simde_mm512_max_pd(fdpmax_acc, fdps_front);
       fdsmin_acc = simde_mm512_min_pd(fdsmin_acc, fdps_back);
-      simde_mm512_store_pd(fdpmax_v[i].data(), fdpmax_acc);
-      simde_mm512_store_pd(fdsmin_v[s - i].data(), fdsmin_acc);
+      simde_mm512_storeu_pd(fdpmax_v[i].data(), fdpmax_acc);
+      simde_mm512_storeu_pd(fdsmin_v[s - i].data(), fdsmin_acc);
     }
     fdpmax_v[s].fill(std::numeric_limits<double>::max());
     fdsmin_v[s].fill(-std::numeric_limits<double>::max());
@@ -258,12 +258,12 @@ void DIM<T>::inclusive_scan()
     simde__m512d fdps_acc = simde_mm512_setzero_pd();
     simde__m512d sdps_acc = simde_mm512_setzero_pd();
     for (uint64_t i = 1; i < s; ++i) {
-      const simde__m512d fdc = simde_mm512_load_pd(fdc_v[i - 1].data());
-      const simde__m512d sdc = simde_mm512_load_pd(sdc_v[i - 1].data());
+      const simde__m512d fdc = simde_mm512_loadu_pd(fdc_v[i - 1].data());
+      const simde__m512d sdc = simde_mm512_loadu_pd(sdc_v[i - 1].data());
       fdps_acc = simde_mm512_add_pd(fdps_acc, fdc);
       sdps_acc = simde_mm512_add_pd(sdps_acc, sdc);
-      simde_mm512_store_pd(fdps_v[i].data(), fdps_acc);
-      simde_mm512_store_pd(sdps_v[i].data(), sdps_acc);
+      simde_mm512_storeu_pd(fdps_v[i].data(), fdps_acc);
+      simde_mm512_storeu_pd(sdps_v[i].data(), sdps_acc);
     }
   }
 }

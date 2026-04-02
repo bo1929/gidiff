@@ -1,103 +1,125 @@
-# compiler options
-#--------------------------------------------
-COMPILER ?= g++
+CXX      ?= g++
+MODE     ?= dynamic
+DEBUG    ?= no
+NATIVE   ?= no
 
-mode ?= dynamic  # Default to dynamic linking
-mdebug ?= no
+PROGRAM  = gidiff
+BDIR = build
 
-CXXFLAGS = -std=c++17 -O3 \
-						-fopenmp-simd \
-						-funroll-loops \
-						-ftree-vectorize \
-						-flto # \
-						# -fno-trapping-math \
-						# -ffast-math
-# Keep it funroll?
+OS   := $(shell uname -s)
+ARCH := $(shell uname -m)
 
-WFLAGS += -Wno-unused-result -Wno-unused-command-line-argument -Wno-undefined-inline
+COMPILER_ID := $(shell $(CXX) -v 2>&1 | grep -qi clang && echo clang || echo gcc)
 
-INC = -I simde \
-			-Iexternal/boost/libs/math/include
+CXXFLAGS  = -std=c++17 -O3 -funroll-loops -flto
+CPPFLAGS  = -I vendor -DBOOST_MATH_STANDALONE
+WFLAGS    = -Wall -Wextra -Wno-unused-result -Wno-unused-parameter
+LDFLAGS   =
+LDLIBS    = -lm -lz -lpthread
 
-# project files
-#--------------------------------------------
-PROGRAM = gidiff
-OBJECTS =	build/random.o build/enc.o \
-					build/MurmurHash3.o build/lshf.o \
-					build/hm.o build/rqseq.o \
-					build/sketch.o build/map.o \
-					build/gidiff.o
+# Compiler-specific warning suppressions
+ifeq ($(COMPILER_ID),clang)
+  WFLAGS += -Wno-unused-command-line-argument -Wno-undefined-inline
+endif
 
-# rules
-#--------------------------------------------
-.PHONY: all dynamic static debug clean
+# Test whether the compiler accepts a given flag
+try-cflag = $(shell echo 'int main(){return 0;}' | $(CXX) $(1) -x c++ -o /dev/null - 2>/dev/null && echo $(1))
 
-all:
-	$(MAKE) mode=dynamic $(PROGRAM)
+ifeq ($(filter $(ARCH),x86_64 i386),$(ARCH))
+  # x86: enable baseline SIMD extensions
+  CXXFLAGS += $(call try-cflag,-msse4.2)
+  CXXFLAGS += $(call try-cflag,-mpopcnt)
+  CXXFLAGS += $(call try-cflag,-mbmi2)
+  # optional: AVX2 (set AVX2=yes to enable)
+  ifeq ($(AVX2),yes)
+    CXXFLAGS += $(call try-cflag,-mavx2)
+    CXXFLAGS += $(call try-cflag,-mfma)
+  endif
+  # optional: AVX-512 (set AVX512=yes to enable)
+  ifeq ($(AVX512),yes)
+    CXXFLAGS += $(call try-cflag,-mavx512f)
+  endif
+else ifeq ($(ARCH),arm64)
+  # Apple Silicon / aarch64 — NEON is on by default; nothing extra needed.
+else ifeq ($(ARCH),aarch64)
+  # Linux aarch64
+endif
 
-dynamic:
-	$(MAKE) mode=dynamic $(PROGRAM)
+# -march=native: optional for local-only builds, not portable binaries
+ifeq ($(NATIVE),yes)
+  CXXFLAGS += -march=native
+endif
 
-static:
-	$(MAKE) mode=static $(PROGRAM)
+# OpenMP SIMD works for both GCC and Clang
+CXXFLAGS += $(call try-cflag,-fopenmp-simd)
 
-debug:
-	$(MAKE) mode=dynamic mdebug=yes $(PROGRAM)
+# Debug mode
+ifeq ($(DEBUG),yes)
+  CXXFLAGS := $(filter-out -O3 -flto,$(CXXFLAGS))
+  #   CXXFLAGS += -pg
+  CXXFLAGS += -O0 -g -ggdb3 -fno-omit-frame-pointer
+  # Address sanitizer (incompatible with LTO)
+  CXXFLAGS += $(call try-cflag,-fsanitize=address)
+  LDFLAGS  += $(call try-cflag,-fsanitize=address)
+endif
 
-# Check for -lcurl
-CURL_SUPPORTED := $(shell echo 'int main() { return 0; }' | $(COMPILER) -lcurl -x c++ -o /dev/null - 2>/dev/null && echo yes || echo no)
-
-OS := $(shell uname -s)
-
-$(info ===== Build mode: $(mode) =====)
-ifeq ($(mode),dynamic)
-	LDFLAGS = -lm -lz -lpthread
-else ifeq ($(mode),static)
-	LDFLAGS = -lm -lz -lpthread
-	ifneq ($(OS),Darwin)
-		LDFLAGS += --static -static-libgcc
-	endif
-	LDFLAGS += -static-libstdc++ 
-	CURL_SUPPORTED = no
-else
-	LDFLAGS = -lm -lz -lpthread
+# Linking mode
+ifeq ($(MODE),static)
+  ifneq ($(OS),Darwin)
+    LDFLAGS += -static -static-libgcc
+  endif
+  LDFLAGS += -static-libstdc++
 endif
 
 ifneq ($(OS),Darwin)
-	LDFLAGS += -lstdc++ -lstdc++fs
+  ifeq ($(COMPILER_ID),gcc)
+    LDLIBS += -lstdc++
+    LDLIBS += $(shell echo 'int main(){return 0;}' | $(CXX) -lstdc++fs -x c++ -o /dev/null - 2>/dev/null && echo -lstdc++fs)
+  endif
 endif
 
-ifeq ($(mdebug),yes)
-	CXXFLAGS += -g -ggdb3 -fno-omit-frame-pointer -fsanitize=address
+# curl (optional, dynamic only)
+LCURL := 0
+ifneq ($(MODE),static)
+  CURL_OK := $(shell echo 'int main(){return 0;}' | $(CXX) -lcurl -x c++ -o /dev/null - 2>/dev/null && echo yes)
+  ifeq ($(CURL_OK),yes)
+    LDLIBS += -lcurl
+    LCURL  := 1
+  endif
 endif
+CPPFLAGS += -D_LCURL=$(LCURL)
 
-LCURL = 0
-ifneq ($(CURL_SUPPORTED),no)
-	ifneq ($(mode),static)
-		LDFLAGS += -lcurl
-		LCURL = 1
-	endif
-endif
-VARDEF= -D _LCURL=$(LCURL)
+SOURCES  = $(wildcard src/*.cpp)
+OBJECTS  = $(patsubst src/%.cpp,$(BDIR)/%.o,$(SOURCES))
+DEPENDS  = $(OBJECTS:.o=.d)
 
-ARCH := $(shell uname -m)
-# Check for -mbmi2
-BMI2_SUPPORTED := $(shell echo 'int main() { return 0; }' | $(COMPILER) -mbmi2 -x c++ -o /dev/null - 2>/dev/null && echo yes || echo no)
-ifeq ($(filter $(ARCH),x86_64 i386),$(ARCH))
-	ifneq ($(BMI2_SUPPORTED),no)
-		CXXFLAGS += -mbmi2
-	endif
-endif
+$(info --- $(PROGRAM): $(OS)/$(ARCH), $(COMPILER_ID), mode=$(MODE), debug=$(DEBUG), native=$(NATIVE) ---)
 
-# generic rule for compiling *.cpp -> *.o
-build/%.o: src/%.cpp
-	@mkdir -p build
-	$(COMPILER) -c src/$*.cpp -o build/$*.o $(WFLAGS) $(CXXFLAGS) $(LDFLAGS) $(VARDEF) $(INC)
+# Rules
+.PHONY: all dynamic static debug clean
+
+all: $(PROGRAM)
+
+dynamic:
+	$(MAKE) MODE=dynamic $(PROGRAM)
+
+static:
+	$(MAKE) MODE=static $(PROGRAM)
+
+debug:
+	$(MAKE) DEBUG=yes $(PROGRAM)
+
+$(BDIR)/%.o: src/%.cpp | $(BDIR)
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(WFLAGS) -MMD -MP -c $< -o $@
 
 $(PROGRAM): $(OBJECTS)
-	$(COMPILER) -o $@ $(WFLAGS) $(CXXFLAGS) $+ $(LDFLAGS) $(VARDEF) $(INC)
+	$(CXX) $(CXXFLAGS) $(LDFLAGS) $^ -o $@ $(LDLIBS)
+
+$(BDIR):
+	@mkdir -p $@
 
 clean:
-	rm -f $(PROGRAM) $(OBJECTS)
-	@if [ -d build ]; then rmdir build; fi
-	@echo "Succesfully cleaned."
+	rm -rf $(BDIR) $(PROGRAM)
+	@echo "Clean."
+
+-include $(DEPENDS)

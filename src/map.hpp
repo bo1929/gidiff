@@ -56,10 +56,10 @@ public:
     if constexpr (std::is_same_v<T, double>) {
       dest += src;
     } else {
-      simde__m512d vd = simde_mm512_load_pd(dest.data());
-      simde__m512d vs = simde_mm512_load_pd(src.data());
+      simde__m512d vd = simde_mm512_loadu_pd(dest.data());
+      simde__m512d vs = simde_mm512_loadu_pd(src.data());
       vd = simde_mm512_add_pd(vd, vs);
-      simde_mm512_store_pd(dest.data(), vd);
+      simde_mm512_storeu_pd(dest.data(), vd);
     }
   }
 
