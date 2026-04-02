@@ -1,4 +1,4 @@
-CXX      ?= g++
+CXX      ?= g++ # e.g., make CXX=clang++
 MODE     ?= dynamic
 DEBUG    ?= no
 NATIVE   ?= no
@@ -56,11 +56,11 @@ CXXFLAGS += $(call try-cflag,-fopenmp-simd)
 # Debug mode
 ifeq ($(DEBUG),yes)
   CXXFLAGS := $(filter-out -O3 -flto,$(CXXFLAGS))
-  #   CXXFLAGS += -pg
+  # CXXFLAGS += -pg
   CXXFLAGS += -O0 -g -ggdb3 -fno-omit-frame-pointer
   # Address sanitizer (incompatible with LTO)
-  CXXFLAGS += $(call try-cflag,-fsanitize=address)
-  LDFLAGS  += $(call try-cflag,-fsanitize=address)
+  # CXXFLAGS += $(call try-cflag,-fsanitize=address)
+  # LDFLAGS  += $(call try-cflag,-fsanitize=address)
 endif
 
 # Linking mode

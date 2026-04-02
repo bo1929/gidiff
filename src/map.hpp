@@ -35,7 +35,7 @@ public:
   static inline double at(T v, size_t idx);
   void release_accumulators() noexcept;
   void inclusive_scan();
-  void extrema_scan(const uint64_t tau, const size_t idx);
+  void extrema_scan();
   void compute_prefhistsum();
   // void skip_mer(uint64_t i); // TODO: Anything better than ignoring?
   void aggregate_mer(uint32_t hdist_min, uint64_t i);

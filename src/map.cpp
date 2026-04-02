@@ -107,7 +107,7 @@ void DIM<T>::release_accumulators() noexcept
 }
 
 template<typename T>
-void DIM<T>::extrema_scan(const uint64_t tau, const size_t idx)
+void DIM<T>::extrema_scan()
 {
   const uint64_t s = nbins + 1;
   fdpmax_v.resize(s + 1);
@@ -365,18 +365,24 @@ void QIE<T>::map_sequences(std::ostream& sout, const str& rid)
 
     // Extract intervals for all thresholds
     dim_fw.inclusive_scan();
+    dim_fw.extrema_scan();
     // dim_fw.release_accumulators();
     dim_rc.inclusive_scan();
+    dim_rc.extrema_scan();
     // dim_rc.release_accumulators();
     if constexpr (std::is_same_v<T, double>) {
-      dim_fw.extract_intervals_sx(std::min(tau_bins, nbins) - 1);
-      dim_rc.extract_intervals_sx(std::min(tau_bins, nbins) - 1);
+      /* dim_fw.extract_intervals_sx(std::min(tau_bins, nbins) - 1); */
+      /* dim_rc.extract_intervals_sx(std::min(tau_bins, nbins) - 1); */
+      dim_fw.extract_intervals_mx(std::min(tau_bins, nbins) - 1);
+      dim_rc.extract_intervals_mx(std::min(tau_bins, nbins) - 1);
       dim_fw.expand_intervals(chisq);
       dim_rc.expand_intervals(chisq);
     } else {
       for (size_t i = 0; i < WIDTH; ++i) {
-        dim_fw.extract_intervals_sx(std::min(tau_bins, nbins) - 1, i);
-        dim_rc.extract_intervals_sx(std::min(tau_bins, nbins) - 1, i);
+        /* dim_fw.extract_intervals_sx(std::min(tau_bins, nbins) - 1, i); */
+        /* dim_rc.extract_intervals_sx(std::min(tau_bins, nbins) - 1, i); */
+        dim_fw.extract_intervals_mx(std::min(tau_bins, nbins) - 1);
+        dim_rc.extract_intervals_mx(std::min(tau_bins, nbins) - 1);
         dim_fw.expand_intervals(chisq, i);
         dim_rc.expand_intervals(chisq, i);
       }
