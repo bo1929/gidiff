@@ -67,7 +67,7 @@ struct params_t
   uint64_t min_length;
   double chisq;
   uint64_t bin_shift;
-  bool segment;
+  bool segment_mode;
 };
 
 // struct alignas(64) cm512_t

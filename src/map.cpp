@@ -11,12 +11,12 @@
 // TODO: Something interesting with the second derivatives? Is the minimum second-derivative interval interesting?
 
 template<typename T>
-DIM<T>::DIM(llh_sptr_t<T> llhf, uint32_t hdist_th, uint64_t nbins, uint64_t nmers, bool segment)
+DIM<T>::DIM(llh_sptr_t<T> llhf, uint32_t hdist_th, uint64_t nbins, uint64_t nmers, bool segment_mode)
   : llhf(llhf)
   , hdist_th(hdist_th)
   , nbins(nbins)
   , nmers(nmers)
-  , segment(segment)
+  , segment_mode(segment_mode)
 {
   fdc_v.resize(nbins); // ?: fdc_v.reserve(nbins);
   sdc_v.resize(nbins); // ?: sdc_v.reserve(nbins);
@@ -27,9 +27,9 @@ DIM<T>::DIM(llh_sptr_t<T> llhf, uint32_t hdist_th, uint64_t nbins, uint64_t nmer
   fdpmax_v.reserve(nbins + 2); // TODO: Remove?
   fdsmin_v.reserve(nbins + 2); // TODO: Remove?
 
-  if (segment) {
+  if (segment_mode) {
     // Row 0 = zeros (sentinel); aggregate_mer writes into rows from 1 to nbins.
-    // build_hpsum() converts in-place
+    // compute_prefhistsum() converts in-place
     hdisthist_v.assign((nbins + 1) * (hdist_th + 1), 0);
   }
 
@@ -59,7 +59,7 @@ void DIM<T>::aggregate_mer(uint32_t hdist_min, uint64_t i)
   // i is the bin index; multiple k-mers in the same bin accumulate here.
   if (hdist_min <= hdist_th) {
     merhit_count++;
-    if (segment) hdisthist_v[(i + 1) * (hdist_th + 1) + hdist_min]++;
+    if (segment_mode) hdisthist_v[(i + 1) * (hdist_th + 1) + hdist_min]++;
     add_to(sdc_v[i], llhf->get_sdc(hdist_min));
     add_to(fdc_v[i], llhf->get_fdc(hdist_min));
   } else {
@@ -88,9 +88,9 @@ void DIM<T>::aggregate_mer(uint32_t hdist_min, uint64_t i)
 }
 
 template<typename T>
-void DIM<T>::build_hpsum()
+void DIM<T>::compute_prefhistsum()
 {
-  if (!segment) return;
+  if (!segment_mode) return;
   const uint32_t W = hdist_th + 1;
   // Row 0 is zeros; add each row to the previous in-place to get prefix sums
   for (uint64_t i = 0; i < nbins; ++i) {
@@ -316,14 +316,14 @@ void DIM<T>::inclusive_scan()
     }
 
     // TODO: Remove both?
-    fdpmax_v.front() = -std::numeric_limits<double>::max();
-    fdsmin_v.front() = std::numeric_limits<double>::max();
+    fdpmax_v[0] = -std::numeric_limits<double>::max();
+    fdsmin_v[0] = std::numeric_limits<double>::max();
     std::inclusive_scan(
       fdps_v.begin() + 1, fdps_v.end(), fdpmax_v.begin() + 1, [](double a, double b) { return std::max(a, b); });
     std::inclusive_scan(
       fdps_v.rbegin(), fdps_v.rend() - 1, fdsmin_v.rbegin() + 1, [](double a, double b) { return std::min(a, b); });
-    fdpmax_v.back() = std::numeric_limits<double>::max();
-    fdsmin_v.back() = -std::numeric_limits<double>::max();
+    fdpmax_v[s] = std::numeric_limits<double>::max();
+    fdsmin_v[s] = -std::numeric_limits<double>::max();
     // Until here?
   } else {
     fdps_v[0].fill(0.0);
@@ -382,7 +382,7 @@ uint64_t DIM<T>::expand_intervals(const double chisq_th, const size_t idx)
       a = ap;
     } else {
       eintervals_v[idx].emplace_back(ap, bp);
-      chisq_v[idx].push_back(chisq_val);
+      // chisq_v[idx].push_back(chisq_val);
     }
 
     ap = a;
@@ -394,15 +394,15 @@ uint64_t DIM<T>::expand_intervals(const double chisq_th, const size_t idx)
   // chisq_val = (sdiff > 0.0) ? (fdiff * fdiff) / sdiff : std::numeric_limits<double>::infinity();
   chisq_val = (fdiff * fdiff) / (sdiff + EPS);
   eintervals_v[idx].emplace_back(ap, bp);
-  chisq_v[idx].push_back(chisq_val);
-  // TODO: Adding this back may make sense.
+  // chisq_v[idx].push_back(chisq_val);
+  // TODO: Adding these deallocations back may make sense.
   // rintervals_v[idx].clear();
   // rintervals_v[idx].shrink_to_fit();
   return eintervals_v[idx].size();
 }
 
 template<typename T>
-interval_t DIM<T>::get_interval(uint64_t i, size_t idx)
+interval_t DIM<T>::get_interval(uint64_t i, size_t idx) const
 {
   if ((idx < eintervals_v.size()) && (i < eintervals_v[idx].size())) {
     return eintervals_v[idx][i];
@@ -447,8 +447,8 @@ void QIE<T>::map_sequences(std::ostream& sout, const str& rid)
     enmers = len - k + 1;
     nbins = (enmers + bin_size - 1) >> bin_shift;
 
-    DIM<T> dim_fw(llhf, params.hdist_th, nbins, enmers, params.segment);
-    DIM<T> dim_rc(llhf, params.hdist_th, nbins, enmers, params.segment);
+    DIM<T> dim_fw(llhf, params.hdist_th, nbins, enmers, params.segment_mode);
+    DIM<T> dim_rc(llhf, params.hdist_th, nbins, enmers, params.segment_mode);
     search_mers(cseq, len, dim_fw, dim_rc);
 
     // Convert min_length (in base-pairs / k-mer units) to bin units for tau
@@ -473,9 +473,9 @@ void QIE<T>::map_sequences(std::ostream& sout, const str& rid)
       }
     }
 
-    if (params.segment) {
-      dim_fw.build_hpsum();
-      dim_rc.build_hpsum();
+    if (params.segment_mode) {
+      dim_fw.compute_prefhistsum();
+      dim_rc.compute_prefhistsum();
       dim_fw.map_contiguous_segments(bin_shift);
       dim_rc.map_contiguous_segments(bin_shift);
       report_segments(sout, rid, dim_fw, false);
@@ -570,10 +570,10 @@ void QIE<T>::report_intervals(std::ostream& sout, const str& rid, DIM<T>& dim, b
 { // TODO: Revisit?
   const str strand = rc ? "-" : "+";
   const double dist_th = at(params.dist_th, idx);
+  const uint64_t nbins = dim.get_nbins();
   const uint64_t n = enmers + k - 1;
-  interval_t ab;
   uint64_t i = 0;
-  ab = dim.get_interval(i, idx);
+  interval_t ab = dim.get_interval(i, idx);
   while (ab.first < nbins) {
     const uint64_t a = ab.first << bin_shift;
     const uint64_t b = std::min(((ab.second + 1) << bin_shift) - 1, enmers - 1) + k - 1;
@@ -621,39 +621,44 @@ double DIM<T>::estimate_interval_distance(uint64_t a, uint64_t b, uint64_t bin_s
 template<typename T>
 void DIM<T>::map_contiguous_segments(uint64_t bin_shift)
 {
-  segments.clear();
+  segments_v.clear();
 
-  // Collect all interval-boundary breakpoints across all thresholds
+  // Collect all interval-boundary breakpoints across all thresholds.
+  // TODO: Intervals are already sorted per threshold; a k-way merge would give O(n) here.
   vec<uint64_t> pts;
-  for (size_t i = 0; i < WIDTH; ++i) {
-    for (const auto& iv : eintervals_v[i]) {
+  for (size_t ti = 0; ti < WIDTH; ++ti) {
+    for (const auto& iv : eintervals_v[ti]) {
       pts.push_back(iv.first);
       pts.push_back(iv.second + 1);
     }
   }
   if (pts.empty()) return;
 
+  // TODO: This entire part seems slow and inefficient.
   // TODO: Sorting seems unnecessary, as the intervals are already sorted just merging is better?
   std::sort(pts.begin(), pts.end());
   pts.erase(std::unique(pts.begin(), pts.end()), pts.end());
 
-  // Each consecutive pair of breakpoints defines an atomic segment [a, b] where
-  // the set of active thresholds is constant. Emit one segment per non-empty atomic region.
+  // Each consecutive pair of breakpoints defines an contiguos segment [a, b] where
+  // the set of thresholds satisfied is constant.
+  arr<size_t, WIDTH> ti_ix = {};
   for (size_t pi = 0; pi + 1 < pts.size(); ++pi) {
     const uint64_t a = pts[pi];
     const uint64_t b = pts[pi + 1] - 1;
     uint8_t mask = 0;
     for (size_t ti = 0; ti < WIDTH; ++ti) {
-      for (const auto& iv : eintervals_v[ti]) {
-        if (iv.first > a) break;
-        if (iv.second >= b) {
-          mask |= static_cast<uint8_t>(1u << ti);
-          break;
-        }
+      // Advance past any interval whose right endpoint is before a.
+      while (ti_ix[ti] < eintervals_v[ti].size() && eintervals_v[ti][ti_ix[ti]].second < a) {
+        ++ti_ix[ti];
+      }
+      // By breakpoint construction [a,b] is either fully inside or fully
+      // outside the current interval, so first <= a is a sufficient check.
+      if (ti_ix[ti] < eintervals_v[ti].size() && eintervals_v[ti][ti_ix[ti]].first <= a) {
+        mask |= static_cast<uint8_t>(1u << ti);
       }
     }
     if (mask == 0) continue;
-    segments.push_back({a, b, estimate_interval_distance(a, b, bin_shift), mask});
+    segments_v.push_back({a, b, estimate_interval_distance(a, b, bin_shift), mask});
   }
 }
 
@@ -662,9 +667,9 @@ void QIE<T>::report_segments(std::ostream& sout, const str& rid, const DIM<T>& d
 {
   const str strand = rc ? "-" : "+";
   const uint64_t n = enmers + k - 1;
-  const auto& segments = dim.get_segments();
+  const auto& segments_v = dim.get_segments();
 
-  for (const auto& ab : segments) {
+  for (const auto& ab : segments_v) {
     const uint64_t a = ab.start << bin_shift;
     const uint64_t b = std::min(((ab.end + 1) << bin_shift) - 1, enmers - 1) + k - 1;
     // TODO: Revisit how we report (rc/fw and other nuances)?
