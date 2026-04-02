@@ -1,3 +1,36 @@
+
+## TODOs
+
+
+
+Define a metric for overlapping start measuring how they overlapping:
+before the test merging
+after the testing, different lower alpha
+
+- subsampling?
+- backtracking
+- multiple-pass
+- change alpha
+Reverse complement
+
+Krepp distance per segment
+
+Do one pass take min p val, merge, check neighbors, repeat
+
+Take contig size into consideration in plots
+
+no sdust?
+
+no r/m splitting, sketch single already?
+
+Implement a model such that given a distance vector with in ANI estimate for a genome, estimate tree distance vector. A simple model perhaps, with missing data (this is important). Get local distance vectors, a compare against its ANI vector. Make sure that initialization etc. doesn't matter. So the vectors are constrained. Maybe something smarter. Incorporating the estimated embedding for the genome-wide distances.
+
+
+**Importante**
+! Parameter checks, for example especially min tau!
+! Strands kept separate for fw/rc, but the test is against the lower distance.
+! Inversion detection based on strand comparison ups and downs?
+
 ## names
 digg
 digit
@@ -117,4 +150,3 @@ Let `(a*, b*)` be any maximal negative-sum interval. We show the algorithm outpu
 ---
 The algorithm is **complete**: every maximal interval is found, none are missed.
 ======
-
