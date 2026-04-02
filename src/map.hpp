@@ -29,15 +29,18 @@ class DIM
   static constexpr size_t WIDTH = std::is_same_v<T, double> ? 1 : RWIDTH;
 
 public:
-  DIM(llh_sptr_t<T> llhf, uint32_t hdist_th, uint64_t nbins, uint64_t nmers, bool segment_mode = false);
+  DIM(llh_sptr_t<T> llhf, uint32_t hdist_th, uint64_t nbins, uint64_t nmers, bool enum_only = true);
   // T get_fdt() const { return fdt; }
   // T get_sdt() const { return sdt; }
   static inline double at(T v, size_t idx);
   void release_accumulators() noexcept;
   void inclusive_scan();
+  void extrema_scan(const uint64_t tau, const size_t idx);
+  void compute_prefhistsum();
   // void skip_mer(uint64_t i); // TODO: Anything better than ignoring?
   void aggregate_mer(uint32_t hdist_min, uint64_t i);
-  void extract_intervals(uint64_t tau, size_t idx = 0);
+  void extract_intervals_mx(uint64_t tau, size_t idx = 0);
+  void extract_intervals_sx(uint64_t tau, size_t idx = 0);
   uint64_t expand_intervals(double chisq_th, size_t idx = 0);
   interval_t get_interval(uint64_t i, size_t idx = 0) const;
   T fdc_at(uint64_t i) const { return fdc_v[i]; } // per-bin f'  contribution
@@ -46,9 +49,8 @@ public:
   const vec<segment_t>& get_segments() const { return segments_v; }
   uint64_t get_nbins() const { return nbins; }
   uint64_t get_nmers() const { return nmers; }
-  double estimate_interval_distance(uint64_t a, uint64_t b, uint64_t bin_shift);
   void map_contiguous_segments(uint64_t bin_shift);
-  void compute_prefhistsum();
+  double estimate_interval_distance(uint64_t a, uint64_t b, uint64_t bin_shift);
   static inline void add_to(T& dest, const T& src)
   {
     if constexpr (std::is_same_v<T, double>) {
@@ -63,7 +65,7 @@ public:
 
 private:
   const llh_sptr_t<T> llhf;
-  const bool segment_mode;
+  const bool enum_only;
   const uint32_t hdist_th;
   const uint64_t nbins; // number of bins
   const uint64_t nmers; // number of k-mers in query (for per-k-mer hdist tracking)
@@ -71,19 +73,19 @@ private:
   uint64_t mermiss_count = 0;
   // T fdt; // To keep the total in case fw/rc decision is needed.
   // T sdt; // Not sure if this is needeed even for fw/rc decision.
-  vec<T> fdc_v;    // The f' contribution c_i of the k-mer (bin) starting at i
-  vec<T> sdc_v;    // The f'' contribution s_i of the k-mer (bin) starting at i
-  vec<T> fdps_v;   // C[i] = sum(c_0, ..., c_{i}), C[0] = 0 (length n) (shifted by 1 w.r.t. fdc_v)
-  vec<T> sdps_v;   // S[i] = sum(s_0, ..., s_{i}), S[0] = 0 (length n) (shifted by 1 w.r.t. sdc_v)
-  vec<T> fdpmax_v; // H[i] = max(C_1, ..., C_{i}), H_0 = -inf, H_{n+1} = inf (length n+1) TODO: Remove?
-  vec<T> fdsmin_v; // L[i] = min(C_{i}, ..., C_n), L_0 = inf, L_{n+1}= -inf (length n+1) TODO: Remove?
+  vec<uint64_t> hdisthist_v; // [(nbins+1) × (hdist_th+1)] row-major, row 0 = zeros, compute_prefhistsum() converts in-place
+  vec<T> fdc_v;              // The f' contribution c_i of the k-mer (bin) starting at i
+  vec<T> sdc_v;              // The f'' contribution s_i of the k-mer (bin) starting at i
+  vec<T> fdps_v;             // C[i] = sum(c_0, ..., c_{i}), C[0] = 0 (length n) (shifted by 1 w.r.t. fdc_v)
+  vec<T> sdps_v;             // S[i] = sum(s_0, ..., s_{i}), S[0] = 0 (length n) (shifted by 1 w.r.t. sdc_v)
+  vec<T> fdpmax_v;           // H[i] = max(C_1, ..., C_{i}), H_0 = -inf, H_{n+1} = inf (length n+1)
+  vec<T> fdsmin_v;           // L[i] = min(C_{i}, ..., C_n), L_0 = inf, L_{n+1}= -inf (length n+1)
   arr<vec<interval_t>, WIDTH> rintervals_v;
   arr<vec<interval_t>, WIDTH> eintervals_v;
+  vec<segment_t> segments_v;
   // arr<vec<double>, WIDTH> chisq_v;
   double d_llh = std::numeric_limits<double>::quiet_NaN();
   double v_llh = std::numeric_limits<double>::quiet_NaN();
-  vec<uint64_t> hdisthist_v; // [(nbins+1) × (hdist_th+1)] row-major, row 0 = zeros, compute_prefhistsum() converts in-place
-  vec<segment_t> segments_v;
 };
 
 template<typename T>
@@ -96,10 +98,10 @@ public:
   void map_sequences(std::ostream& sout, const str& rid);
 
 private:
+  static inline double at(T v, size_t idx);
   void search_mers(const char* cseq, uint64_t len, DIM<T>& dim_fw, DIM<T>& dim_rc);
   void report_intervals(std::ostream& sout, const str& rid, DIM<T>& dim, bool rc, size_t idx = 0);
   void report_segments(std::ostream& sout, const str& rid, const DIM<T>& dim, bool rc);
-  static inline double at(T v, size_t idx);
 
   const sketch_sptr_t sketch;
   const lshf_sptr_t lshf;
@@ -114,10 +116,10 @@ private:
   const double chisq; // 3.841; // 95%
   uint64_t mask_bp;
   uint64_t mask_lr;
-  uint64_t onmers;
-  uint64_t enmers; // number of k-mers in current query (= len - k + 1)
+  uint64_t onmers; // number of observed k-mers in current query (e.g., due to Ns)
+  uint64_t enmers; // number of expected k-mers in current query (= len - k + 1)
   uint64_t nbins;  // number of bins  (= ceil(enmers / bin_len))
-  uint64_t bix;
+  uint64_t bix;    // Index of the current query in the this batch
   llh_sptr_t<T> llhf;
 
   const vec<str>& seq_batch;
@@ -126,5 +128,8 @@ private:
 
 #define WRITE_CINTERVAL(qid, n, a, b, strand, rid, dist_th)                                                                 \
   qid << '\t' << n << '\t' << a << '\t' << b << '\t' << strand << '\t' << rid << '\t' << dist_th
+
+#define WRITE_SEGMENT(qid, n, a, b, strand, rid, dist, mask)                                                                \
+  qid << '\t' << n << '\t' << a << '\t' << b << '\t' << strand << '\t' << rid << '\t' << dist << '\t' << mask
 
 #endif
