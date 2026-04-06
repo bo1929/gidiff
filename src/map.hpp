@@ -1,16 +1,25 @@
 #ifndef _MAP_H
 #define _MAP_H
 
-#include <algorithm>
+#include <unordered_map>
 #include <simde/x86/avx512.h>
 #include "llh.hpp"
 #include "lshf.hpp"
 #include "rqseq.hpp"
 #include "sketch.hpp"
-#include "hm.hpp"
-#include "enc.hpp"
-#include "types.hpp"
-#include "exthash.hpp"
+
+static constexpr uint64_t NULL_SAMPLES_PER_LENGTH = 200;
+static constexpr uint64_t NULL_MIN_SAMPLES = 30;
+static constexpr std::array<double, 3> GAMMA_FIT_PROBS = {0.25, 0.50, 0.75};
+static constexpr double SUBSAMPLE_FACTOR = 1.0;
+static constexpr double GRID_GROWTH = 1.25;
+
+struct qrec_t
+{
+  uint64_t nbins;
+  uint64_t nmers;
+  vec<uint64_t> hdisthist_v; // subsampled prefix-sum rows, flattened [(nbins/G + 1) × W]
+};
 
 template<typename T>
 class QIE;
@@ -26,10 +35,12 @@ struct segment_t
 
 struct output_record_t
 {
-  const str* qid;
+  uint64_t bix;
   uint64_t n, a, b;
+  uint64_t nbins_s;
   char strand;
   double d_s, d_q;
+  double percentile, fold;
   uint8_t mask;
   char sign;
 };
@@ -52,8 +63,8 @@ public:
   void aggregate_mer(uint32_t hdist_min, uint64_t i);
   void extract_intervals_mx(uint64_t tau, size_t idx = 0);
   void extract_intervals_sx(uint64_t tau, size_t idx = 0);
-  uint64_t expand_intervals(double chisq_th, size_t idx = 0);
-  interval_t get_interval(uint64_t i, size_t idx = 0) const;
+  void expand_intervals(double chisq_th, size_t idx = 0);
+  [[nodiscard]] interval_t get_interval(uint64_t i, size_t idx = 0) const;
   T fdc_at(uint64_t i) const { return fdc_v[i]; } // per-bin f'  contribution
   T sdc_at(uint64_t i) const { return sdc_v[i]; } // per-bin f'' contribution
   const vec<uint64_t>& get_hdisthist() const { return hdisthist_v; }
@@ -112,6 +123,9 @@ private:
   void search_mers(const char* cseq, uint64_t len, DIM<T>& dim_fw, DIM<T>& dim_rc);
   void report_intervals(std::ostream& sout, const str& rid, DIM<T>& dim, bool rc, size_t idx = 0);
   void collect_segments(const DIM<T>& dim, bool rc, double d_q);
+  void store_qrec(const DIM<T>& dim);
+  void build_length_grid();
+  void fit_gamma_significance();
   void emit_segments(std::ostream& sout, const str& rid) const;
   double compute_mle_dist(const vec<uint64_t>& v, uint64_t u);
 
@@ -122,7 +136,8 @@ private:
   const uint32_t h;
   const uint32_t m;
   const params_t<T> params;
-  const uint64_t min_length;
+  const uint64_t tau;
+  const uint64_t btau;
   const uint64_t bin_shift;
   const uint64_t bin_size;
   const double chisq; // 3.841; // 95%
@@ -137,20 +152,20 @@ private:
   const vec<str>& seq_batch;
   const vec<str>& qid_batch;
 
-  vec<uint64_t> v_acc_fw;
-  vec<uint64_t> v_acc_rc;
-  uint64_t u_acc_fw = 0;
-  uint64_t u_acc_rc = 0;
-  double d_acc_fw = std::numeric_limits<double>::quiet_NaN();
-  double d_acc_rc = std::numeric_limits<double>::quiet_NaN();
+  double d_acc = std::numeric_limits<double>::quiet_NaN();
+  uint64_t u_acc = 0;
+  vec<uint64_t> v_acc;
+  uint64_t gstride = 1;
+  vec<uint64_t> length_grid;
+  vec<qrec_t> qrecs;
   vec<output_record_t> output_records;
 };
 
 #define WRITE_CINTERVAL(qid, n, a, b, strand, rid, dist_th)                                                                 \
   qid << '\t' << n << '\t' << a << '\t' << b << '\t' << strand << '\t' << rid << '\t' << dist_th
 
-#define WRITE_SEGMENT(qid, n, a, b, strand, rid, dist, mask, sign, d_q, d_acc)                                              \
+#define WRITE_SEGMENT(qid, n, a, b, strand, rid, dist, mask, sign, d_q, d_acc, pctl, fold)                                  \
   qid << '\t' << n << '\t' << a << '\t' << b << '\t' << strand << '\t' << rid << '\t' << dist << '\t' << mask << '\t'       \
-      << sign << '\t' << d_q << '\t' << d_acc
+      << sign << '\t' << d_q << '\t' << d_acc << '\t' << pctl << '\t' << fold
 
 #endif

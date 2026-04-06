@@ -94,9 +94,9 @@ private:
   std::ofstream output_file;
   std::ostream* output_stream = &std::cout;
   uint32_t hdist_th = 4;
-  uint64_t total_qseq = 0;
-  uint64_t min_length = 0;
+  uint64_t tau = 1;
   uint64_t bin_shift = 0;
+  uint64_t total_qseq = 0;
   double chisq = 33.00051; // 1e-10
   bool enum_only = false;
   std::vector<double> dist_th;
