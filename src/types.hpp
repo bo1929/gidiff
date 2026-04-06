@@ -65,7 +65,7 @@ struct params_t
   size_t n;
   T dist_th;
   uint32_t hdist_th;
-  uint64_t min_length;
+  uint64_t tau;
   double chisq;
   uint64_t bin_shift;
   bool enum_only;

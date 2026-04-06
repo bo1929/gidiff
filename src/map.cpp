@@ -1,7 +1,8 @@
 #include "map.hpp"
 #include <boost/math/tools/minima.hpp>
+#include <boost/math/distributions/gamma.hpp>
 
-#define EPS 1e-10
+static constexpr double EPS = 1e-10;
 
 // TODO: Further optimize, and polish.
 // TODO: A better output format with a header? For both modes...
@@ -289,10 +290,10 @@ void DIM<T>::inclusive_scan()
 }
 
 template<typename T>
-uint64_t DIM<T>::expand_intervals(const double chisq_th, const size_t idx)
+void DIM<T>::expand_intervals(const double chisq_th, const size_t idx)
 {
   if (rintervals_v[idx].empty()) {
-    return 0;
+    return;
   }
 
   double fdiff, sdiff, chisq_val;
@@ -312,7 +313,6 @@ uint64_t DIM<T>::expand_intervals(const double chisq_th, const size_t idx)
       a = ap;
     } else {
       eintervals_v[idx].emplace_back(ap, bp);
-      // chisq_v[idx].push_back(chisq_val);
     }
 
     ap = a;
@@ -324,10 +324,8 @@ uint64_t DIM<T>::expand_intervals(const double chisq_th, const size_t idx)
   // chisq_val = (sdiff > 0.0) ? (fdiff * fdiff) / sdiff : std::numeric_limits<double>::infinity();
   chisq_val = (fdiff * fdiff) / (sdiff + EPS);
   eintervals_v[idx].emplace_back(ap, bp);
-  // chisq_v[idx].push_back(chisq_val);
   rintervals_v[idx].clear();
   rintervals_v[idx].shrink_to_fit();
-  return eintervals_v[idx].size();
 }
 
 template<typename T>
@@ -349,7 +347,8 @@ QIE<T>::QIE(sketch_sptr_t sketch, lshf_sptr_t lshf, const vec<str>& seq_batch, c
   , m(lshf->get_m())
   , batch_size(seq_batch.size())
   , params(params)
-  , min_length(params.min_length)
+  , tau(params.tau)
+  , btau((params.tau + bin_size - 1) >> params.bin_shift)
   , bin_shift(params.bin_shift)
   , bin_size(1 << params.bin_shift)
   , chisq(params.chisq)
@@ -361,8 +360,8 @@ QIE<T>::QIE(sketch_sptr_t sketch, lshf_sptr_t lshf, const vec<str>& seq_batch, c
   mask_lr = ((u64m >> (64 - k)) << 32) + ((u64m << 32) >> (64 - k));
   mask_bp = u64m >> ((32 - k) * 2);
   if (!params.enum_only) {
-    v_acc_fw.assign(MAXHD + 1, 0);
-    v_acc_rc.assign(MAXHD + 1, 0);
+    v_acc.assign(MAXHD + 1, 0);
+    gstride = std::max(uint64_t(1), static_cast<uint64_t>(std::ceil(btau * SUBSAMPLE_FACTOR)));
   }
 }
 
@@ -384,8 +383,8 @@ void QIE<T>::map_sequences(std::ostream& sout, const str& rid)
     DIM<T> dim_rc(llhf, params.hdist_th, nbins, enmers, params.enum_only);
     search_mers(cseq, len, dim_fw, dim_rc);
 
-    // Convert min_length (in base-pairs / k-mer units) to bin units for tau
-    const uint64_t tau_bins = (min_length + bin_size - 1) >> bin_shift;
+    // Convert tau (in base-pairs / k-mer units) to bin units for tau
+    const uint64_t btau = (tau + bin_size - 1) >> bin_shift;
 
     // Extract intervals for all thresholds
     dim_fw.inclusive_scan();
@@ -394,19 +393,20 @@ void QIE<T>::map_sequences(std::ostream& sout, const str& rid)
     dim_rc.inclusive_scan();
     dim_rc.extrema_scan();
     // dim_rc.release_accumulators();
+
     if constexpr (std::is_same_v<T, double>) {
-      /* dim_fw.extract_intervals_sx(std::min(tau_bins, nbins) - 1); */
-      /* dim_rc.extract_intervals_sx(std::min(tau_bins, nbins) - 1); */
-      dim_fw.extract_intervals_mx(std::min(tau_bins, nbins) - 1);
-      dim_rc.extract_intervals_mx(std::min(tau_bins, nbins) - 1);
+      /* dim_fw.extract_intervals_sx(std::min(btau, nbins) - 1); */
+      /* dim_rc.extract_intervals_sx(std::min(btau, nbins) - 1); */
+      dim_fw.extract_intervals_mx(std::min(btau, nbins) - 1);
+      dim_rc.extract_intervals_mx(std::min(btau, nbins) - 1);
       dim_fw.expand_intervals(chisq);
       dim_rc.expand_intervals(chisq);
     } else {
       for (size_t i = 0; i < WIDTH; ++i) {
-        /* dim_fw.extract_intervals_sx(std::min(tau_bins, nbins) - 1, i); */
-        /* dim_rc.extract_intervals_sx(std::min(tau_bins, nbins) - 1, i); */
-        dim_fw.extract_intervals_mx(std::min(tau_bins, nbins) - 1, i);
-        dim_rc.extract_intervals_mx(std::min(tau_bins, nbins) - 1, i);
+        /* dim_fw.extract_intervals_sx(std::min(btau, nbins) - 1, i); */
+        /* dim_rc.extract_intervals_sx(std::min(btau, nbins) - 1, i); */
+        dim_fw.extract_intervals_mx(std::min(btau, nbins) - 1, i);
+        dim_rc.extract_intervals_mx(std::min(btau, nbins) - 1, i);
         dim_fw.expand_intervals(chisq, i);
         dim_rc.expand_intervals(chisq, i);
       }
@@ -448,7 +448,7 @@ void QIE<T>::map_sequences(std::ostream& sout, const str& rid)
       dim_rc.map_contiguous_segments(bin_shift, pos_bv, '<');
       dim_rc.map_contiguous_segments(bin_shift, neg_bv, '>');
 
-      // Extract per-query histograms, compute per-query MLE, accumulate into file-level
+      // Extract per-query histograms, compute per-query MLE, accumulate into genome-wide histogram
       vec<uint64_t> v_q_fw, v_q_rc;
       uint64_t u_q_fw = 0, u_q_rc = 0, t_q_fw = 0, t_q_rc = 0;
       dim_fw.extract_histogram(0, nbins, bin_shift, v_q_fw, u_q_fw, t_q_fw);
@@ -459,20 +459,23 @@ void QIE<T>::map_sequences(std::ostream& sout, const str& rid)
       collect_segments(dim_fw, false, d_q_fw);
       collect_segments(dim_rc, true, d_q_rc);
 
-      simde__m512i vc_fw = simde_mm512_loadu_si512(v_acc_fw.data());
-      simde__m512i vc_rc = simde_mm512_loadu_si512(v_acc_rc.data());
-      vc_fw = simde_mm512_add_epi64(vc_fw, simde_mm512_loadu_si512(v_q_fw.data()));
-      vc_rc = simde_mm512_add_epi64(vc_rc, simde_mm512_loadu_si512(v_q_rc.data()));
-      simde_mm512_storeu_si512(v_acc_fw.data(), vc_fw);
-      simde_mm512_storeu_si512(v_acc_rc.data(), vc_rc);
-      u_acc_fw += u_q_fw;
-      u_acc_rc += u_q_rc;
+      store_qrec(dim_fw);
+      store_qrec(dim_rc);
+
+      // Accumulate the strand with lower per-query distance into genome-wide histogram
+      const bool pick_fw = !(d_q_fw > d_q_rc); // prefer fw on tie or NaN
+      const auto& v_q = pick_fw ? v_q_fw : v_q_rc;
+      const uint64_t u_q = pick_fw ? u_q_fw : u_q_rc;
+      simde__m512i vc = simde_mm512_loadu_si512(v_acc.data());
+      vc = simde_mm512_add_epi64(vc, simde_mm512_loadu_si512(v_q.data()));
+      simde_mm512_storeu_si512(v_acc.data(), vc);
+      u_acc += u_q;
     }
   }
 
   if (!params.enum_only) {
-    d_acc_fw = compute_mle_dist(v_acc_fw, u_acc_fw);
-    d_acc_rc = compute_mle_dist(v_acc_rc, u_acc_rc);
+    d_acc = compute_mle_dist(v_acc, u_acc);
+    fit_gamma_significance();
     emit_segments(sout, rid);
   }
 }
@@ -502,7 +505,7 @@ void QIE<T>::search_mers(const char* cseq, uint64_t len, DIM<T>& dim_fw, DIM<T>&
     orenc64_lr &= mask_lr;
     rcenc64_bp = revcomp_bp64(orenc64_bp, k);
     onmers++;
-    const uint64_t bix_j = j >> bin_shift; // The bin index for this k-mer position
+    const uint64_t bin_j = j >> bin_shift; // The bin index for this k-mer position
 #ifdef CANONICAL
     if (rcenc64_bp < orenc64_bp) {
       orrix = lshf->compute_hash(orenc64_bp);
@@ -512,7 +515,7 @@ void QIE<T>::search_mers(const char* cseq, uint64_t len, DIM<T>& dim_fw, DIM<T>&
       sketch->prefetch_offset_enc(off_fw);
       uint32_t hdist_fw;
       if (sketch->scan_bucket(off_fw, enc_lr_fw, hdist_fw)) {
-        dim_fw.aggregate_mer(hdist_fw, bix_j);
+        dim_fw.aggregate_mer(hdist_fw, bin_j);
       }
     } else {
       rcrix = lshf->compute_hash(rcenc64_bp);
@@ -522,7 +525,7 @@ void QIE<T>::search_mers(const char* cseq, uint64_t len, DIM<T>& dim_fw, DIM<T>&
       sketch->prefetch_offset_enc(off_rc);                                  // Phase 3
       uint32_t hdist_rc;
       if (sketch->scan_bucket(off_rc, enc_lr_rc, hdist_rc)) {
-        dim_rc.aggregate_mer(hdist_rc, bix_j);
+        dim_rc.aggregate_mer(hdist_rc, bin_j);
       }
     }
 #else
@@ -538,11 +541,11 @@ void QIE<T>::search_mers(const char* cseq, uint64_t len, DIM<T>& dim_fw, DIM<T>&
     sketch->prefetch_offset_enc(off_rc);
     uint32_t hdist_fw;
     if (sketch->scan_bucket(off_fw, enc_lr_fw, hdist_fw)) {
-      dim_fw.aggregate_mer(hdist_fw, bix_j);
+      dim_fw.aggregate_mer(hdist_fw, bin_j);
     }
     uint32_t hdist_rc;
     if (sketch->scan_bucket(off_rc, enc_lr_rc, hdist_rc)) {
-      dim_rc.aggregate_mer(hdist_rc, bix_j);
+      dim_rc.aggregate_mer(hdist_rc, bin_j);
     }
 #endif /* CANONICAL */
   }
@@ -558,7 +561,7 @@ void QIE<T>::report_intervals(std::ostream& sout, const str& rid, DIM<T>& dim, b
   uint64_t i = 0;
   interval_t ab = dim.get_interval(i, idx);
   while (ab.first < nbins) {
-    const uint64_t a = (ab.first <= 1) ? 1 : ((ab.first << bin_shift) + 1);
+    const uint64_t a = (ab.first << bin_shift) + 1;
     const uint64_t b = std::min(((ab.second + 1) << bin_shift), enmers) + k - 1;
     sout << WRITE_CINTERVAL(qid_batch[bix], n, a, b, strand, rid, dist_th) << '\n';
     ab = dim.get_interval(++i, idx);
@@ -641,7 +644,8 @@ void DIM<T>::map_contiguous_segments(uint64_t bin_shift, uint8_t th_bv, char sig
       }
     }
     if (mask == 0) continue;
-    segments_v.push_back({a, b, estimate_interval_distance(a, b, bin_shift), mask, sign});
+    const double d_s = estimate_interval_distance(a, b, bin_shift);
+    segments_v.push_back({a, b, d_s, mask, sign});
   }
 }
 
@@ -666,9 +670,262 @@ void QIE<T>::collect_segments(const DIM<T>& dim, bool rc, double d_q)
 
   for (const auto& ab : segments_v) {
     // if (std::isnan(ab.d_s)) continue;
-    const uint64_t a = (ab.start <= 1) ? 1 : ((ab.start << bin_shift) + 1);
+    const uint64_t a = (ab.start << bin_shift) + 1;
     const uint64_t b = std::min(((ab.end + 1) << bin_shift), enmers) + k - 1;
-    output_records.push_back({&qid_batch[bix], n, a, b, strand, ab.d_s, d_q, ab.mask, ab.sign});
+    const uint64_t nbins_s = ab.end - ab.start + 1;
+    output_records.push_back({bix, n, a, b, nbins_s, strand, ab.d_s, d_q, 0.0, 0.0, ab.mask, ab.sign});
+  }
+}
+
+template<typename T>
+void QIE<T>::store_qrec(const DIM<T>& dim)
+{
+  const uint32_t W = params.hdist_th + 1;
+  const uint64_t G = gstride;
+  const uint64_t nbins_q = dim.get_nbins();
+  const uint64_t nbins_qsub = nbins_q / G + 1; // rows at 0, G, 2G, ..., floor(nbins/G)*G
+
+  qrec_t qr;
+  qr.nbins = nbins_q;
+  qr.nmers = dim.get_nmers();
+  qr.hdisthist_v.resize(nbins_qsub * W);
+
+  const auto& src = dim.get_hdisthist();
+  for (uint64_t i = 0; i < nbins_qsub; ++i) {
+    const uint64_t rix = i * G;
+    std::copy_n(src.begin() + rix * W, W, qr.hdisthist_v.begin() + i * W);
+  }
+
+  qrecs.push_back(std::move(qr));
+}
+
+template<typename T>
+void QIE<T>::build_length_grid()
+{
+  const uint64_t G = gstride;
+
+  // Find max usable bins across all stored contigs
+  uint64_t max_bins = 0;
+  for (const auto& qr : qrecs) {
+    const uint64_t usable = (qr.nbins / G) * G;
+    if (usable > max_bins) max_bins = usable;
+  }
+
+  if (max_bins < G) return;
+
+  // Build geometric grid of lengths, all multiples of G
+  length_grid.clear();
+  uint64_t L = G;
+  while (L <= max_bins) {
+    length_grid.push_back(L);
+    uint64_t next = static_cast<uint64_t>(std::ceil(L * GRID_GROWTH / G)) * G;
+    if (next <= L) next = L + G;
+    L = next;
+  }
+}
+
+template<typename T>
+void QIE<T>::fit_gamma_significance()
+{
+  using boost::math::gamma_distribution;
+
+  build_length_grid();
+
+  // Fit Gamma to a sorted sample vector using quantile matching + 2D Nelder-Mead
+  auto fit_gamma = [](const vec<double>& sorted_samples) -> std::pair<double, double> {
+    const size_t n = sorted_samples.size();
+    if (n < 3) return {1.0, 1.0};
+
+    // Compute empirical quantiles
+    std::array<double, GAMMA_FIT_PROBS.size()> emp_q;
+    for (size_t i = 0; i < GAMMA_FIT_PROBS.size(); ++i) {
+      const double idx = GAMMA_FIT_PROBS[i] * (n - 1);
+      const size_t lo = static_cast<size_t>(idx);
+      const size_t hi = std::min(lo + 1, n - 1);
+      const double frac = idx - lo;
+      emp_q[i] = sorted_samples[lo] * (1.0 - frac) + sorted_samples[hi] * frac;
+    }
+
+    if (emp_q.back() < EPS) return {1.0, EPS};
+
+    // Mean distance for initialization
+    double mean_d = 0.0;
+    for (double x : sorted_samples)
+      mean_d += x;
+    mean_d /= n;
+    if (mean_d < EPS) mean_d = EPS;
+
+    // SSE objective over both shape (alpha) and scale (beta)
+    auto sse = [&](double a, double b) -> double {
+      if (a < EPS || b < EPS) return 1e30;
+      gamma_distribution<double> g(a, b);
+      double s = 0.0;
+      for (size_t i = 0; i < GAMMA_FIT_PROBS.size(); ++i) {
+        const double diff = quantile(g, GAMMA_FIT_PROBS[i]) - emp_q[i];
+        s += diff * diff;
+      }
+      return s;
+    };
+
+    // Nelder-Mead on (alpha, beta), initialized at (1, mean_d)
+    using pt = std::array<double, 2>;
+    std::array<pt, 3> S = {pt{1.0, mean_d}, pt{2.0, mean_d}, pt{1.0, 2.0 * mean_d}};
+    std::array<double, 3> F;
+    for (int i = 0; i < 3; ++i)
+      F[i] = sse(S[i][0], S[i][1]);
+
+    for (int iter = 0; iter < 500; ++iter) {
+      // Sort vertices by objective
+      if (F[0] > F[1]) {
+        std::swap(S[0], S[1]);
+        std::swap(F[0], F[1]);
+      }
+      if (F[1] > F[2]) {
+        std::swap(S[1], S[2]);
+        std::swap(F[1], F[2]);
+      }
+      if (F[0] > F[1]) {
+        std::swap(S[0], S[1]);
+        std::swap(F[0], F[1]);
+      }
+
+      if (F[2] - F[0] < 1e-12 && iter > 10) break;
+
+      // Centroid of best 2
+      pt c = {0.5 * (S[0][0] + S[1][0]), 0.5 * (S[0][1] + S[1][1])};
+
+      // Reflect
+      pt r = {2.0 * c[0] - S[2][0], 2.0 * c[1] - S[2][1]};
+      double fr = sse(r[0], r[1]);
+
+      if (fr < F[0]) {
+        // Expand
+        pt e = {c[0] + 2.0 * (r[0] - c[0]), c[1] + 2.0 * (r[1] - c[1])};
+        double fe = sse(e[0], e[1]);
+        if (fe < fr) {
+          S[2] = e;
+          F[2] = fe;
+        } else {
+          S[2] = r;
+          F[2] = fr;
+        }
+      } else if (fr < F[1]) {
+        S[2] = r;
+        F[2] = fr;
+      } else {
+        // Contract
+        pt w = (fr < F[2]) ? r : S[2];
+        double fw = std::min(fr, F[2]);
+        pt cc = {0.5 * (c[0] + w[0]), 0.5 * (c[1] + w[1])};
+        double fc = sse(cc[0], cc[1]);
+        if (fc <= fw) {
+          S[2] = cc;
+          F[2] = fc;
+        } else {
+          // Shrink toward best
+          for (int j = 1; j < 3; ++j) {
+            S[j][0] = 0.5 * (S[0][0] + S[j][0]);
+            S[j][1] = 0.5 * (S[0][1] + S[j][1]);
+            F[j] = sse(S[j][0], S[j][1]);
+          }
+        }
+      }
+    }
+
+    // Return best vertex
+    int best = 0;
+    if (F[1] < F[best]) best = 1;
+    if (F[2] < F[best]) best = 2;
+    return {std::max(S[best][0], EPS), std::max(S[best][1], EPS)};
+  };
+
+  // Sample null distances per grid length, fit Gamma immediately, accumulate for fallback
+  const uint32_t W = params.hdist_th + 1;
+  const uint64_t G = gstride;
+  vec<double> all_samples;
+  std::unordered_map<uint64_t, std::pair<double, double>> gamma_params;
+
+  for (const uint64_t L_g : length_grid) {
+    const uint64_t L_steps = L_g / G;
+    vec<double> dists;
+
+    for (const auto& qr : qrecs) {
+      const uint64_t nbins_qsub = qr.nbins / G + 1;
+      if (nbins_qsub <= L_steps) continue;
+
+      const uint64_t max_start_idx = nbins_qsub - 1 - L_steps;
+      const uint64_t n_samples = std::min(NULL_SAMPLES_PER_LENGTH, max_start_idx + 1);
+      std::uniform_int_distribution<uint64_t> dist(0, max_start_idx);
+
+      for (uint64_t si = 0; si < n_samples; ++si) {
+        const uint64_t idx = dist(gen);
+
+        // Compute histogram: row[idx + L_steps] - row[idx]
+        vec<uint64_t> v(MAXHD + 1, 0);
+        uint64_t t = 0;
+        for (uint32_t d = 0; d < W; ++d) {
+          v[d] = qr.hdisthist_v[(idx + L_steps) * W + d] - qr.hdisthist_v[idx * W + d];
+          t += v[d];
+        }
+        if (t == 0) continue;
+
+        // Compute miss count
+        const uint64_t start_bin = idx * G;
+        const uint64_t end_bin = start_bin + L_g;
+        const uint64_t total_nmers = std::min(end_bin << bin_shift, qr.nmers) - (start_bin << bin_shift);
+        const uint64_t u = total_nmers - t;
+
+        // Compute distance via LLH + Brent
+        llhf->set_counts(v.data(), u);
+        auto f = [&](const double& D) { return (*llhf)(D); };
+        dists.push_back(boost::math::tools::brent_find_minima(f, EPS, 0.5, 24).first);
+      }
+    }
+
+    all_samples.insert(all_samples.end(), dists.begin(), dists.end());
+    std::sort(dists.begin(), dists.end());
+    if (dists.size() >= NULL_MIN_SAMPLES) {
+      gamma_params[L_g] = fit_gamma(dists);
+      // TODO: remove debug print
+      double mean_d = 0.0;
+      for (double x : dists)
+        mean_d += x;
+      mean_d /= dists.size();
+      const size_t nd = dists.size();
+      const double q1 = dists[nd / 4], med = dists[nd / 2], q3 = dists[3 * nd / 4];
+      const auto& [a, b] = gamma_params[L_g];
+      std::cerr << "[DEBUG gamma] L=" << L_g << " n=" << nd << " mean=" << mean_d << " Q1=" << q1 << " med=" << med
+                << " Q3=" << q3 << " alpha=" << a << " beta=" << b << '\n';
+    }
+  }
+
+  // Fit fallback from all pooled samples
+  std::sort(all_samples.begin(), all_samples.end());
+  std::pair<double, double> fallback_params = {1.0, 1.0};
+  if (all_samples.size() >= NULL_MIN_SAMPLES) {
+    fallback_params = fit_gamma(all_samples);
+    // TODO: remove debug print
+    /* double mean_all = 0.0;
+    for (double x : all_samples) mean_all += x;
+    mean_all /= all_samples.size();
+    const size_t na = all_samples.size();
+    const double q1a = all_samples[na / 4], meda = all_samples[na / 2], q3a = all_samples[3 * na / 4];
+    std::cerr << "[DEBUG gamma] FALLBACK n=" << na
+              << " mean=" << mean_all << " Q1=" << q1a << " med=" << meda << " Q3=" << q3a
+              << " alpha=" << fallback_params.first
+              << " beta=" << fallback_params.second << '\n'; */
+  }
+
+  // Score each output record (snap nbins_s up to nearest grid length)
+  for (auto& r : output_records) {
+    auto git = std::lower_bound(length_grid.begin(), length_grid.end(), r.nbins_s);
+    const uint64_t grid_L = (git != length_grid.end()) ? *git : (length_grid.empty() ? 0 : length_grid.back());
+    auto it = gamma_params.find(grid_L);
+    const auto [alpha, beta] = (it != gamma_params.end()) ? it->second : fallback_params;
+    gamma_distribution<double> g(alpha, beta);
+    r.percentile = boost::math::cdf(g, r.d_s);
+    const double med = quantile(g, 0.5);
+    r.fold = (med > EPS) ? r.d_s / med : std::numeric_limits<double>::quiet_NaN();
   }
 }
 
@@ -679,8 +936,19 @@ void QIE<T>::emit_segments(std::ostream& sout, const str& rid) const
   const str strand_rc = "-";
   for (const auto& r : output_records) {
     const str& strand = (r.strand == '+') ? strand_fw : strand_rc;
-    const double d_acc = (r.strand == '+') ? d_acc_fw : d_acc_rc;
-    sout << WRITE_SEGMENT(*r.qid, r.n, r.a, r.b, strand, rid, r.d_s, static_cast<uint32_t>(r.mask), r.sign, r.d_q, d_acc)
+    sout << WRITE_SEGMENT(qid_batch[r.bix],
+                          r.n,
+                          r.a,
+                          r.b,
+                          strand,
+                          rid,
+                          r.d_s,
+                          static_cast<uint32_t>(r.mask),
+                          r.sign,
+                          r.d_q,
+                          d_acc,
+                          r.percentile,
+                          r.fold)
          << '\n';
   }
 }

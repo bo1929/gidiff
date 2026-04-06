@@ -28,7 +28,7 @@ bool MapSC::validate_configuration()
       std::cerr << "One of the distance thresholds is too close to zero: " << dist_th[i] << std::endl;
     }
   }
-  if ((1 << bin_shift) > min_length) {
+  if ((1 << bin_shift) > tau) {
     is_invalid = true;
     std::cerr << "The given bin size (2^b) is too large for the minimum length threshold, b: " << bin_shift << std::endl;
   }
@@ -41,7 +41,7 @@ void MapSC::write_header()
     (*output_stream) << "QUERY_ID\tSEQ_LEN\tINTERVAL_START\tINTERVAL_END\tSTRAND\tREF_ID\tDIST_TH\n";
   } else {
     (*output_stream)
-      << "QUERY_ID\tSEQ_LEN\tINTERVAL_START\tINTERVAL_END\tSTRAND\tREF_ID\tDIST\tMASK\tSIGN\tDIST_CONTIG\tDIST_GENOME\n";
+      << "QUERY_ID\tSEQ_LEN\tINTERVAL_START\tINTERVAL_END\tSTRAND\tREF_ID\tDIST\tMASK\tSIGN\tDIST_CONTIG\tDIST_GENOME\tPERCENTILE\tFOLD\n";
   }
 }
 
@@ -74,8 +74,8 @@ void MapSC::map()
   }
   sketch_stream.close();
 
-  params_t<double> params_single = {dist_th.size(), dist_th.front(), hdist_th, min_length, chisq, bin_shift, enum_only};
-  params_t<cm512_t> params_multiple = {dist_th.size(), {0}, hdist_th, min_length, chisq, bin_shift, enum_only};
+  params_t<double> params_single = {dist_th.size(), dist_th.front(), hdist_th, tau, chisq, bin_shift, enum_only};
+  params_t<cm512_t> params_multiple = {dist_th.size(), {0}, hdist_th, tau, chisq, bin_shift, enum_only};
   std::copy(dist_th.begin(), dist_th.end(), params_multiple.dist_th.begin());
 
   // Per-sketch result buffers
@@ -249,7 +249,7 @@ MapSC::MapSC(CLI::App& sc)
   sc.add_option("--hdist-th", hdist_th, "Maximum Hamming distance for a k-mer to match. [4]")->check(CLI::NonNegativeNumber);
   sc.add_option("--chisq", chisq, "Chi-square threshold. [33.00051]")->check(CLI::NonNegativeNumber);
   sc.add_option("-d,--dist-th", dist_th, "Distance threshold(s) - provide exactly 1 or 8 values")->required()->expected(1, 8);
-  sc.add_option("-l,--min-length", min_length, "Minimum interval length.")->required()->check(CLI::PositiveNumber);
+  sc.add_option("-l,--min-length", tau, "Minimum interval length.")->required()->check(CLI::PositiveNumber);
   sc.add_option("-b,--bin-shift", bin_shift, "Group consecutive k-mers into bins of size 2^b. [0]")
     ->check(CLI::NonNegativeNumber);
   sc.add_flag("--enum-only,!--no-enum-only", enum_only, "Enumerate intervals without MLE distance estimation. [false]");

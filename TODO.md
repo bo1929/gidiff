@@ -1,4 +1,5 @@
-
+Output format!!!!! Not very clean. No header.
+The entire boundary issue is so confusing. Check it and make it make sense.
 ## TODOs
 
 
@@ -30,6 +31,9 @@ Implement a model such that given a distance vector with in ANI estimate for a g
 ! Parameter checks, for example especially min tau!
 ! Strands kept separate for fw/rc, but the test is against the lower distance.
 ! Inversion detection based on strand comparison ups and downs?
+
+
+! Review gidiff.cpp/hpp and polish. messages and names.
 
 ## names
 digg
