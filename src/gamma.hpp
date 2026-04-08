@@ -13,6 +13,7 @@ struct GammaModel
     double beta;
   };
   static constexpr double eps = 1e-10;
+  static constexpr double tol = 1e-6;
   static constexpr int max_niter = 250;
   static constexpr uint64_t min_nsamples = 30;
   static constexpr std::array<double, 3> fit_probs = {0.25, 0.50, 0.75};
@@ -76,7 +77,7 @@ struct GammaModel
         std::swap(F[0], F[1]);
       }
 
-      if (F[2] - F[0] < 1e-12 && iter > 10) break;
+      if (F[2] - F[0] < tol && iter > 10) break;
 
       pt c = {0.5 * (S[0].alpha + S[1].alpha), 0.5 * (S[0].beta + S[1].beta)};
       pt r = {2.0 * c.alpha - S[2].alpha, 2.0 * c.beta - S[2].beta};

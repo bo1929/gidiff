@@ -183,10 +183,11 @@ void QIE<T>::report_intervals(std::ostream& sout, const str& rid, DIM<T>& dim, b
   for (uint64_t i = 0;; ++i) {
     const interval_t ab = dim.get_interval(i, idx);
     if (ab.first >= nbins) break;
-    const uint64_t a = (ab.first << params.bin_shift) + 1;
+    const uint64_t a = ab.first << params.bin_shift;
     const uint64_t b = std::min(((ab.second + 1) << params.bin_shift), enmers) + k - 1;
     assert(a < b);
-    write_tsv(sout, qid_batch[bix], L, a, b, strand, rid, dist_th) << '\n';
+    // write_tsv(sout, qid_batch[bix], L, a, b, strand, rid, dist_th) << '\n';
+    write_tsv(sout, qid_batch[bix], L, a, b - 1, strand, rid, dist_th) << '\n';
   }
 }
 
