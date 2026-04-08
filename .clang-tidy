@@ -1,0 +1,70 @@
+---
+# Focused checks: bugs > performance > style noise
+Checks: >
+  bugprone-*,
+  performance-*,
+  portability-*,
+  cppcoreguidelines-init-variables,
+  cppcoreguidelines-pro-type-member-init,
+  readability-convert-member-functions-to-static,
+  readability-make-member-function-const,
+  readability-math-missing-parentheses,
+  modernize-use-auto,
+  modernize-use-nullptr,
+  modernize-use-equals-default,
+  modernize-use-equals-delete,
+  modernize-use-override,
+  -bugprone-forward-declaration-namespace,
+  -bugprone-easily-swappable-parameters,
+  -bugprone-reserved-identifier,
+  -cppcoreguidelines-avoid-magic-numbers,
+  -cppcoreguidelines-non-private-member-variables-in-classes,
+  -cppcoreguidelines-macro-usage,
+  -cppcoreguidelines-pro-bounds-pointer-arithmetic,
+  -cppcoreguidelines-pro-type-reinterpret-cast,
+  -cppcoreguidelines-pro-type-cstyle-cast,
+  -cppcoreguidelines-pro-type-const-cast,
+  -cppcoreguidelines-avoid-non-const-global-variables,
+  -cppcoreguidelines-avoid-const-or-ref-data-members,
+  -cppcoreguidelines-missing-std-forward,
+  -cppcoreguidelines-special-member-functions,
+  -cppcoreguidelines-narrowing-conversions,
+  -modernize-use-trailing-return-type,
+  -modernize-use-nodiscard,
+  -modernize-avoid-c-style-cast,
+  -modernize-macro-to-enum,
+  -readability-magic-numbers,
+  -readability-named-parameter,
+  -readability-identifier-length,
+  -readability-braces-around-statements,
+  -readability-implicit-bool-conversion,
+  -readability-use-concise-preprocessor-directives,
+  -readability-uppercase-literal-suffix,
+  -readability-redundant-inline-specifier,
+  -readability-use-std-min-max,
+  -readability-isolate-declaration,
+  -readability-const-return-type,
+  -performance-enum-size,
+  -portability-reserved-identifier
+
+WarningsAsErrors: ''
+HeaderFilterRegex: '(src/.*|\.hpp$)'
+# Exclude vendor headers and external code
+ExcludeHeaderFilterRegex: '(vendor/|CLI11|kseq|MurmurHash3)'
+FormatStyle: file
+CheckOptions:
+  - key:   readability-function-cognitive-complexity.Threshold
+    value: '50'
+  - key:   cppcoreguidelines-special-member-functions.AllowSoleDefaultDtor
+    value: '1'
+  - key:   cppcoreguidelines-special-member-functions.AllowMissingMoveFunctionsWhenCopyIsDeleted
+    value: '1'
+  - key:   modernize-loop-convert.MaxCopySize
+    value: '32'
+  - key:   modernize-loop-convert.MinConfidence
+    value: 'reasonable'
+  - key:   modernize-use-auto.MinTypeNameLength
+    value: '5'
+  - key:   modernize-use-nullptr.NullMacros
+    value: 'NULL'
+...
