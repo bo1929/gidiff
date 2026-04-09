@@ -6,6 +6,7 @@
 - Make sure that sampled intervals do not overlap with the tested one(s).
 - Make sure that examples are fine and correct.
 - Make sure that the test is two-sided.
+- From each sampled segment, sample multiple distances based on the likelihood function (proportional to lrw, for example).
 
 ## Critical / Bugs
 
@@ -68,3 +69,6 @@
 
 - **Distance vector model**: Given a per-segment distance vector and an ANI estimate for a genome, build a model to estimate a tree distance vector. Handle missing data. Constrain vectors. Possibly incorporate genome-wide distance embeddings.
 - **krepp distance per segment**: Use krepp to compute/validate per-segment distances.
+
+## Notes
+Whatever you do, update the tests and the readme constantly.

@@ -635,10 +635,10 @@ void DIM<T>::map_contiguous_segments(uint8_t th_bv, char sign)
 {
   if (th_bv == 0) return;
 
-  // Collect breakpoints via merge of the sorted a- and (b+1)-sequences per threshold.
+  // Collect breakpoints via merge of the sorted (a, b) sequences per threshold.
   // Within each threshold, a's are strictly increasing and b's are strictly increasing.
-  // Boundary breakpoints 0 and nbins ensure the entire sequence [0, nbins) is segmented.
-  vec<uint64_t> pts = {0, nbins};
+  // Boundary breakpoints 1 and nbins ensure the entire sequence [1, nbins] is segmented.
+  vec<uint64_t> pts = {1, nbins};
   for (size_t ti = 0; ti < WIDTH; ++ti) {
     if (!(th_bv & (1u << ti))) continue;
     const auto& e_v = eintervals_v[ti];
@@ -672,7 +672,7 @@ void DIM<T>::map_contiguous_segments(uint8_t th_bv, char sign)
   arr<size_t, WIDTH> ti_ix = {};
   for (size_t pi = 0; pi + 1 < pts.size(); ++pi) {
     const uint64_t a = pts[pi];
-    const uint64_t b = pts[pi + 1] - 1;
+    const uint64_t b = pts[pi + 1];
     uint8_t mask = 0;
     for (size_t ti = 0; ti < WIDTH; ++ti) {
       if (!(th_bv & (1u << ti))) continue;
@@ -686,9 +686,10 @@ void DIM<T>::map_contiguous_segments(uint8_t th_bv, char sign)
         mask |= static_cast<uint8_t>(1u << ti);
       }
     }
-    const double d_s = estimate_interval_distance(a, b);
-    segments_v.push_back({a, b, d_s, mask, sign});
+    const double d_s = estimate_interval_distance(a - 1, b);
+    segments_v.push_back({a, b - 1, d_s, mask, sign});
   }
+  segments_v.back().end += 1;
 }
 
 template<typename T>
@@ -722,12 +723,13 @@ void QIE<T>::collect_segments(const DIM<T>& dim, double d_q, bool rc)
 
   for (const auto& ab : segments_v) {
     // if (std::isnan(ab.d_s)) continue;
-    const uint64_t a = (ab.start << params.bin_shift) + 1;
-    const uint64_t b = std::min(((ab.end + 1) << params.bin_shift), enmers) + k - 1;
-    assert(a < b);
-    const uint64_t nbins_s = ab.end - ab.start + 1;
+    const uint64_t a = ((ab.start - 1) << params.bin_shift) + 1;
+    const uint64_t b = std::min((ab.end << params.bin_shift), enmers);
+    // assert(a < b);
+    const uint64_t nbins_s = ab.end - ab.start;
     records_v.emplace_back(bix, L, a, b, nbins_s, strand, ab.d_s, d_q, ab.mask, ab.sign);
   }
+  records_v.back().b = records_v.back().b + k - 1;
 }
 
 template<typename T>
@@ -767,7 +769,7 @@ double DIM<T>::estimate_interval_distance(uint64_t a, uint64_t b)
 {
   vec<uint64_t> v;
   uint64_t u, t;
-  extract_histogram(a, b + 1, v, u, t);
+  extract_histogram(a, b, v, u, t);
   llhf->set_counts(v.data(), u);
   auto f = [&](const double& D) { return (*llhf)(D); };
   const double ub = (t == 0) ? 0.75 + eps : 0.5;
