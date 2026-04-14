@@ -64,8 +64,8 @@ void MapSC::map()
 
   uint32_t nsketches;
   sketch_stream.read(reinterpret_cast<char*>(&nsketches), sizeof(uint32_t));
-  uint32_t nct = std::max(1u, std::min(num_threads, nsketches));
-  std::cerr << "Processing " << nsketches << " sketches w/ " << nct << " thread(s)..." << std::endl;
+  const uint32_t nthreads = std::max(1u, std::min(num_threads, nsketches));
+  std::cerr << "Processing " << nsketches << " sketches w/ " << nthreads << " thread(s)..." << std::endl;
 
   std::vector<uint64_t> sketch_offsets(nsketches);
   for (uint32_t i = 0; i < nsketches; ++i) {
@@ -74,15 +74,13 @@ void MapSC::map()
   }
   sketch_stream.close();
 
-  params_t<double> params_single(dist_th.size(), dist_th.front(), hdist_th, tau, chisq, bin_shift, enum_only);
-  params_t<cm512_t> params_multiple(dist_th.size(), {0}, hdist_th, tau, chisq, bin_shift, enum_only);
+  size_T n = dist_th.size();
+  params_t<double> params_single(n, dist_th.front(), hdist_th, tau, chisq, bin_shift, nsamples, ecdf_test, enum_only);
+  params_t<cm512_t> params_multiple(n, {0}, hdist_th, tau, chisq, bin_shift, nsamples, ecdf_test, enum_only);
   std::copy(dist_th.begin(), dist_th.end(), params_multiple.dist_th.begin());
 
   // Per-sketch result buffers
   std::vector<strstream> results(nsketches);
-
-  // Work-stealing thread pool
-  const uint32_t nthreads = std::max(1u, std::min(num_threads, nsketches));
   std::atomic<uint32_t> next_idx{0};
   std::atomic<uint32_t> done_count{0};
   std::mutex cerr_mtx;
@@ -100,10 +98,10 @@ void MapSC::map()
       strstream sout;
       sout << std::setprecision(5);
       if (dist_th.size() == 1) {
-        QIE<double> qie(sketch, sketch->get_lshf(), qs->get_seq_batch(), qs->get_qid_batch(), params_single);
+        QIE<double> qie(params_single, sketch, sketch->get_lshf(), qs->get_seq_batch(), qs->get_qid_batch());
         qie.map_sequences(sout, sketch->get_rid());
       } else {
-        QIE<cm512_t> qie(sketch, sketch->get_lshf(), qs->get_seq_batch(), qs->get_qid_batch(), params_multiple);
+        QIE<cm512_t> qie(params_multiple, sketch, sketch->get_lshf(), qs->get_seq_batch(), qs->get_qid_batch());
         qie.map_sequences(sout, sketch->get_rid());
       }
 
@@ -252,6 +250,7 @@ MapSC::MapSC(CLI::App& sc)
   sc.add_option("-l,--min-length", tau, "Minimum interval length.")->required()->check(CLI::PositiveNumber);
   sc.add_option("-b,--bin-shift", bin_shift, "Group consecutive k-mers into bins of size 2^b. [0]")
     ->check(CLI::NonNegativeNumber);
+  sc.add_flag("--ecdf-test,!--no-ecdf-test", ecdf_test, "Use ECDF-based test instead of the Gamma assumption. [false]");
   sc.add_flag("--enum-only,!--no-enum-only", enum_only, "Enumerate intervals without MLE distance estimation. [false]");
   sc.callback([&]() {
     if (!validate_configuration()) {

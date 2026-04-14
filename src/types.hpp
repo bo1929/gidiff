@@ -32,6 +32,7 @@ using enc_t = uint32_t;
 using str = std::string;
 using strstream = std::stringstream;
 using interval_t = std::pair<uint64_t, uint64_t>;
+using xy_t = std::pair<double, double>;
 using rseq_sptr_t = std::shared_ptr<RSeq>;
 using qseq_sptr_t = std::shared_ptr<QSeq>;
 using lshf_sptr_t = std::shared_ptr<LSHF>;
@@ -64,24 +65,37 @@ struct params_t
   size_t n;           // Number of distance thresholds given, also equals to WIDTH later
   T dist_th;          // Distance threshold used for detection across varying scales
   uint32_t hdist_th;  // Hamming distance threshold used for k-mer search
+  uint64_t tau;       // The minimum length threshold in sites
+  uint64_t tau_bin;   // The minimum length threshold in number of bins instead of sites
   double chisq;       // Chi-square threshold in the statistical test for interval merging
   uint64_t bin_shift; // Shift value for fast bin index calculation
   uint64_t bin_size;  // Bin size in sites, equals to pow(2, bin_shift)
-  uint64_t tau;       // The minimum length threshold in sites
-  uint64_t tau_bin;   // The minimum length threshold in number of bins instead of sites
+  uint64_t nsamples;  // Number of null distance samples per grid length
+  bool ecdf_test;     // Use ECDF-based test instead of Gamma parameter estimation
   bool enum_only;
 
-  params_t(size_t n, T dist_th, uint32_t hdist_th, uint64_t tau, double chisq, uint64_t bin_shift, bool enum_only)
+  params_t(size_t n,
+           T dist_th,
+           uint32_t hdist_th,
+           uint64_t tau,
+           double chisq,
+           uint64_t bin_shift,
+           uint64_t nsamples,
+           bool ecdf_test,
+           bool enum_only)
     : n(n)
     , dist_th(dist_th)
     , hdist_th(hdist_th)
     , tau(tau)
+    , tau_bin((tau + (uint64_t(1) << bin_shift) - 1) >> bin_shift)
     , chisq(chisq)
     , bin_shift(bin_shift)
     , bin_size(uint64_t(1) << bin_shift)
-    , tau_bin((tau + (uint64_t(1) << bin_shift) - 1) >> bin_shift)
+    , nsamples(nsamples)
+    , ecdf_test(ecdf_test)
     , enum_only(enum_only)
   {
+    assert(tau_bin > 1);
   }
 };
 

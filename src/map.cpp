@@ -2,21 +2,42 @@
 #include "random.hpp"
 #include <boost/math/tools/minima.hpp>
 
+namespace {
+  template<typename T>
+  inline double at(T v, const size_t idx)
+  {
+    if constexpr (std::is_same_v<T, double>) {
+      return v;
+    } else {
+      return v[idx];
+    }
+  }
+
+  template<typename T>
+  std::pair<double, double> mle(const llh_sptr_t<T>& llhf, const vec<uint64_t>& v, uint64_t u, uint64_t t)
+  {
+    llhf->set_counts(v.data(), u);
+    auto f = [&](const double& D) { return (*llhf)(D); };
+    const double ub = (t == 0) ? 0.75 + eps : 0.5;
+    return boost::math::tools::brent_find_minima(f, eps, ub, 24);
+  }
+} // namespace
+
 template<typename T>
-QIE<T>::QIE(const sketch_sptr_t& sketch,
+QIE<T>::QIE(const params_t<T>& params,
+            const sketch_sptr_t& sketch,
             const lshf_sptr_t& lshf,
             const vec<str>& seq_batch,
-            const vec<str>& qid_batch,
-            const params_t<T>& params)
-  : sketch(sketch)
+            const vec<str>& qid_batch)
+  : params(params)
+  , sketch(sketch)
   , lshf(lshf)
+  , seq_batch(seq_batch)
+  , qid_batch(qid_batch)
   , batch_size(seq_batch.size())
   , k(lshf->get_k())
   , h(lshf->get_h())
   , m(lshf->get_m())
-  , params(params)
-  , seq_batch(seq_batch)
-  , qid_batch(qid_batch)
 {
   llhf = std::make_shared<LLH<T>>(k, h, sketch->get_rho(), params.hdist_th, params.dist_th);
   const uint64_t u64m = std::numeric_limits<uint64_t>::max();
@@ -45,34 +66,31 @@ void QIE<T>::map_sequences(std::ostream& sout, const str& rid)
       warn_msg("The bin size is too high for the query sequence length: " + std::to_string(len));
       continue;
     }
+    if (params.tau_bin > nbins) {
+      warn_msg("The minimum length threshold is too high for a query sequence of length: " + std::to_string(len));
+      continue;
+    }
 
-    DIM<T> dim_fw(llhf, params, nbins, enmers);
-    DIM<T> dim_rc(llhf, params, nbins, enmers);
+    DIM<T> dim_fw(params, llhf, nbins, enmers);
+    DIM<T> dim_rc(params, llhf, nbins, enmers);
     search_mers(cseq, len, dim_fw, dim_rc);
 
     // Extract intervals for all thresholds
-    dim_fw.inclusive_scan();
-    dim_fw.extrema_scan();
-    // dim_fw.release_accumulators();
-    dim_rc.inclusive_scan();
-    dim_rc.extrema_scan();
-    // dim_rc.release_accumulators();
-
-    if constexpr (std::is_same_v<T, double>) {
-      /* dim_fw.extract_intervals_sx(std::min(params.tau_bin, nbins) - 1); */
-      /* dim_rc.extract_intervals_sx(std::min(params.tau_bin, nbins) - 1); */
-      dim_fw.extract_intervals_mx(std::min(params.tau_bin, nbins) - 1);
-      dim_rc.extract_intervals_mx(std::min(params.tau_bin, nbins) - 1);
-      dim_fw.expand_intervals(params.chisq);
-      dim_rc.expand_intervals(params.chisq);
-    } else {
-      for (size_t i = 0; i < WIDTH; ++i) {
-        /* dim_fw.extract_intervals_sx(std::min(params.tau_bin, nbins) - 1, i); */
-        /* dim_rc.extract_intervals_sx(std::min(params.tau_bin, nbins) - 1, i); */
-        dim_fw.extract_intervals_mx(std::min(params.tau_bin, nbins) - 1, i);
-        dim_rc.extract_intervals_mx(std::min(params.tau_bin, nbins) - 1, i);
-        dim_fw.expand_intervals(params.chisq, i);
-        dim_rc.expand_intervals(params.chisq, i);
+    const uint64_t tau_eff = std::min(params.tau_bin, nbins) - 1;
+    for (auto* dim : {&dim_fw, &dim_rc}) {
+      dim->inclusive_scan();
+      dim->extrema_scan();
+      // dim->release_accumulators();
+      if constexpr (std::is_same_v<T, double>) {
+        /* dim->extract_intervals_sx(tau_eff); */
+        dim->extract_intervals_mx(tau_eff);
+        dim->expand_intervals(params.chisq);
+      } else {
+        for (size_t i = 0; i < WIDTH; ++i) {
+          /* dim->extract_intervals_sx(tau_eff, i); */
+          dim->extract_intervals_mx(tau_eff, i);
+          dim->expand_intervals(params.chisq, i);
+        }
       }
     }
 
@@ -87,15 +105,12 @@ void QIE<T>::map_sequences(std::ostream& sout, const str& rid)
         }
       }
     } else {
-      dim_fw.compute_prefhistsum();
-      dim_rc.compute_prefhistsum();
-
       const auto [pos_bv, neg_bv] = llhf->get_sign_bv();
-
-      dim_fw.map_contiguous_segments(pos_bv, '<');
-      dim_fw.map_contiguous_segments(neg_bv, '>');
-      dim_rc.map_contiguous_segments(pos_bv, '<');
-      dim_rc.map_contiguous_segments(neg_bv, '>');
+      for (auto* dim : {&dim_fw, &dim_rc}) {
+        dim->compute_prefhistsum();
+        dim->map_contiguous_segments(pos_bv, '<');
+        dim->map_contiguous_segments(neg_bv, '>');
+      }
 
       // Extract per-query histograms, compute per-query MLE, accumulate into genome-wide histogram
       vec<uint64_t> v_q_fw, v_q_rc;
@@ -105,16 +120,17 @@ void QIE<T>::map_sequences(std::ostream& sout, const str& rid)
       const double d_q_fw = compute_mle_dist(v_q_fw, u_q_fw, t_q_fw);
       const double d_q_rc = compute_mle_dist(v_q_rc, u_q_rc, t_q_rc);
 
+      // Determine reference strand as the one with lower distance
+      const bool is_r = std::isnan(d_q_rc) || (!std::isnan(d_q_fw) && d_q_fw <= d_q_rc);
+
+      dim_fw.set_rstrand(is_r);
+      dim_rc.set_rstrand(!is_r);
+
       collect_segments(dim_fw, d_q_fw, false);
       collect_segments(dim_rc, d_q_rc, true);
-
-      save_qstride(dim_fw);
-      save_qstride(dim_rc);
-
-      // Accumulate the strand with lower per-query distance into genome-wide histogram
-      const bool is_fw = std::isnan(d_q_rc) || (!std::isnan(d_q_fw) && d_q_fw <= d_q_rc);
-      const auto& v_q = is_fw ? v_q_fw : v_q_rc;
-      const uint64_t u_q = is_fw ? u_q_fw : u_q_rc;
+      save_qstride(is_r ? dim_fw : dim_rc);
+      const auto& v_q = is_r ? v_q_fw : v_q_rc;
+      const uint64_t u_q = is_r ? u_q_fw : u_q_rc;
       simde__m512i v_sacc = simde_mm512_loadu_si512(v_acc.data());
       v_sacc = simde_mm512_add_epi64(v_sacc, simde_mm512_loadu_si512(v_q.data()));
       simde_mm512_storeu_si512(v_acc.data(), v_sacc);
@@ -133,9 +149,9 @@ void QIE<T>::map_sequences(std::ostream& sout, const str& rid)
 }
 
 template<typename T>
-DIM<T>::DIM(const llh_sptr_t<T>& llhf, const params_t<T>& params, uint64_t nbins, uint64_t nmers)
-  : llhf(llhf)
-  , params(params)
+DIM<T>::DIM(const params_t<T>& params, const llh_sptr_t<T>& llhf, uint64_t nbins, uint64_t nmers)
+  : params(params)
+  , llhf(llhf)
   , nbins(nbins)
   , nmers(nmers)
 {
@@ -151,18 +167,16 @@ DIM<T>::DIM(const llh_sptr_t<T>& llhf, const params_t<T>& params, uint64_t nbins
 template<typename T>
 void QIE<T>::emit_segments(std::ostream& sout, const str& rid) const
 { // TODO: Revisit?
-  static constexpr std::string_view strand_fw = "+";
-  static constexpr std::string_view strand_rc = "-";
   for (const auto& r : records_v) {
-    std::string_view strand = (r.strand == '+') ? strand_fw : strand_rc;
     write_tsv(sout,
               qid_batch[r.bix],
               r.L,
               r.a,
               r.b,
-              strand,
+              r.strand,
+              // r.rstrand ? "T" : "F", // TODO: Enable for visualization.
               rid,
-              r.d_s,
+              r.d,
               static_cast<uint32_t>(r.mask),
               r.sign,
               r.d_q,
@@ -193,53 +207,135 @@ void QIE<T>::report_intervals(std::ostream& sout, const str& rid, DIM<T>& dim, b
 
 template<typename T>
 void QIE<T>::fit_gamma_significance()
-{
+{ // TODO: Debug.
   const uint64_t G = stride_len;
 
   // Find the largest bin count (G aligned) across all stored queries.
   uint64_t max_nbins = 0;
-  for (const auto& qs : qstrides_v)
+  for (const auto& qs : qstrides_v) {
     max_nbins = std::max(max_nbins, (qs.nbins / G) * G);
+  }
   if (max_nbins < G) {
-    warn_msg("All queries too short for significance scoring with stride length " + std::to_string(G));
+    warn_msg("All queries are too short for significance testing with strides of length " + std::to_string(G));
     return;
   }
 
-  // Walk a geometric grid of lengths (multiples of G) up to the maximum number of bins.
-  // At each grid length, sample null distances and fit a Gamma distribution.
-  vec<uint64_t> grid_L;
-  vec<GammaModel::params_t> gamma_params;
+  // Build the full geometric grid of lengths up to the maximum number of bins.
+  vec<uint64_t> L_v;
   for (uint64_t L = G; L <= max_nbins;) {
-    vec<double> dists_v;
-    sample_distances(L, dists_v);
-    if (dists_v.size() >= GammaModel::min_nsamples) {
-      std::sort(dists_v.begin(), dists_v.end());
-      grid_L.push_back(L);
-      gamma_params.push_back(GammaModel::fit(dists_v));
-    } else {
-      warn_msg("Failed to sample sufficient number of distances for the length " + std::to_string(L));
-    }
-    uint64_t step = std::ceil(L * (grid_growth - 1.0) / G);
-    L += std::max(G, step * G);
+    L_v.push_back(L);
+    uint64_t step = std::ceil((L + G) * (grid_growth - 1.0) / G) * G;
+    L += step;
   }
 
-  // Score each record against the nearest fitted grid length.
-  if (grid_L.empty()) return;
+  assert(!L_v.empty());
+
+  // Map each record to its nearest grid index.
+  vec<size_t> idx_v(records_v.size());
+  vec<bool> seen_v(L_v.size(), false);
+  for (size_t ridx = 0; ridx < records_v.size(); ++ridx) {
+    auto it = std::lower_bound(L_v.begin(), L_v.end(), records_v[ridx].nbins_s);
+    if (it == L_v.end()) {
+      --it; // Round to largest grid length
+    } else if (it != L_v.begin()) {
+      // Round to whichever neighbor is closer
+      auto prev = std::prev(it);
+      if ((records_v[ridx].nbins_s - *prev) < (*it - records_v[ridx].nbins_s)) {
+        it = prev;
+      }
+    }
+    const size_t grid_idx = static_cast<size_t>(it - L_v.begin());
+    idx_v[ridx] = grid_idx;
+    seen_v[grid_idx] = true;
+  }
+
+  // Sample only for seen grid lengths and fit a global Gamma for each.
+  vec<vec<snull_t>> samples_vvec(L_v.size());
+  vec<GammaModel::params_t> gp_v(L_v.size());
+  vec<bool> valid_v(L_v.size(), false);
+
+  for (size_t grid_idx = 0; grid_idx < L_v.size(); ++grid_idx) {
+    if (!seen_v[grid_idx]) continue;
+    sample_distances(L_v[grid_idx], samples_vvec[grid_idx]);
+
+    if (samples_vvec[grid_idx].size() >= GammaModel::min_nsamples) {
+      std::sort(samples_vvec[grid_idx].begin(), samples_vvec[grid_idx].end(), [](const snull_t& a, const snull_t& b) {
+        return a.d < b.d;
+      });
+      if (!params.ecdf_test) {
+        vec<double> d_v(samples_vvec[grid_idx].size());
+        for (size_t i = 0; i < d_v.size(); ++i)
+          d_v[i] = samples_vvec[grid_idx][i].d;
+        gp_v[grid_idx] = GammaModel::fit(d_v);
+      }
+      valid_v[grid_idx] = true;
+    } else {
+      warn_msg("Failed to sample sufficient number of distances for the length " + std::to_string(L_v[grid_idx]));
+    }
+  }
+
+  // Score each record, filtering out null samples that overlap with the record itself.
   using boost::math::gamma_distribution;
-  for (auto& r : records_v) {
-    auto it = std::lower_bound(grid_L.begin(), grid_L.end(), r.nbins_s);
-    if (it == grid_L.end()) --it;
-    const auto& gp = gamma_params[it - grid_L.begin()];
-    gamma_distribution<double> g(gp.alpha, gp.beta);
-    r.percentile = boost::math::cdf(g, r.d_s);
-    const double median = quantile(g, 0.5);
-    r.fold = (median > eps) ? r.d_s / median : std::numeric_limits<double>::quiet_NaN();
+  for (size_t ridx = 0; ridx < records_v.size(); ++ridx) {
+    auto& r = records_v[ridx];
+    const size_t grid_idx = idx_v[ridx];
+    assert(valid_v[grid_idx]);
+
+    // Collect non-overlapping null distances for this record
+    const size_t qidx = r.bix;
+    const uint64_t bin_a = (r.a - 1) >> params.bin_shift;
+    const uint64_t bin_b = bin_a + r.nbins_s + 1;
+    vec<double> d_v;
+    d_v.reserve(samples_vvec[grid_idx].size());
+    for (const auto& s : samples_vvec[grid_idx]) {
+      if ((s.qidx == qidx) && (s.start < bin_b) && (bin_a < s.end)) continue;
+      d_v.push_back(s.d);
+    }
+
+    if (d_v.size() < GammaModel::min_nsamples) {
+      warn_msg("Filtering overlapping segments resulted in too few null samples to test");
+    }
+
+    double cdf_val = std::numeric_limits<double>::quiet_NaN();
+    double median = std::numeric_limits<double>::quiet_NaN();
+    if (params.ecdf_test) {
+      // ECDF-based test, no parameter estimation
+      const size_t N = d_v.size();
+      const auto lb = std::lower_bound(d_v.begin(), d_v.end(), r.d);
+      const size_t rank = static_cast<size_t>(lb - d_v.begin());
+      cdf_val = static_cast<double>(rank) / static_cast<double>(N);
+      median = (N % 2 == 0) ? 0.5 * (d_v[N / 2 - 1] + d_v[N / 2]) : d_v[N / 2];
+    } else {
+      // Gamma scoring with parameter estimation
+      const bool has_overlap = (d_v.size() < samples_vvec[grid_idx].size());
+      GammaModel::params_t gp;
+
+      if (!has_overlap) {
+        // No overlap, hence just use the precomputed global Gamma
+        gp = gp_v[grid_idx];
+      } else {
+        // Refit Gamma from filtered (non-overlapping) samples
+        gp = GammaModel::fit(d_v);
+      }
+
+      gamma_distribution<double> g(gp.alpha, gp.beta);
+      cdf_val = boost::math::cdf(g, r.d);
+      median = quantile(g, 0.5);
+    }
+    if (r.rstrand) {
+      // Two-sided for the strand closer to the reference
+      r.percentile = 2.0 * std::min(cdf_val, 1.0 - cdf_val);
+    } else {
+      // One-sided for the opposite strand
+      r.percentile = cdf_val;
+    }
+    r.fold = (median > eps) ? r.d / median : std::numeric_limits<double>::quiet_NaN();
   }
 }
 
 template<typename T>
-void QIE<T>::sample_distances(uint64_t L, vec<double>& dists_v) const
-{
+void QIE<T>::sample_distances(uint64_t L, vec<snull_t>& samples_v) const
+{ // TODO: Debug.
   const uint32_t W = params.hdist_th + 1;
   const uint64_t G = stride_len;
   const uint64_t N = L / G;
@@ -258,7 +354,7 @@ void QIE<T>::sample_distances(uint64_t L, vec<double>& dists_v) const
   // Sample windows with probability proportional to available positions.
   std::discrete_distribution<size_t> rvidx(weights.begin(), weights.end());
 
-  for (uint64_t si = 0; si < nsamples_per_length; ++si) {
+  for (uint64_t si = 0; si < params.nsamples; ++si) {
     const size_t qidx = rvidx(gen);
     const auto& qs = qstrides_v[qidx];
     const uint64_t nstrides = (qs.nbins / G) + 1;
@@ -278,36 +374,14 @@ void QIE<T>::sample_distances(uint64_t L, vec<double>& dists_v) const
     // Compute miss count as the total nmers in the window minus hits
     const uint64_t bin_a = pidx * G;
     const uint64_t bin_b = bin_a + L;
-    const uint64_t total_nmers = std::min(bin_b << params.bin_shift, qs.nmers) - (bin_a << params.bin_shift);
-    const uint64_t u = total_nmers - t;
+    const uint64_t a = (bin_a << params.bin_shift);
+    const uint64_t b = std::min((bin_b << params.bin_shift), qs.nmers);
+    const uint64_t u = (b - a) - t;
 
     // Compute distance via LLH + Brent; widen upper bound when no hits
-    llhf->set_counts(v.data(), u);
-    auto f = [&](const double& D) { return (*llhf)(D); };
-    const double ub = (t == 0) ? 0.75 + eps : 0.5;
-    double d = boost::math::tools::brent_find_minima(f, eps, ub, 24).first;
+    double d = mle(llhf, v, u, t).first;
     if (std::isnan(d)) d = 0.75;
-    dists_v.push_back(d);
-  }
-}
-
-template<typename T>
-inline double DIM<T>::at(T v, const size_t idx)
-{
-  if constexpr (std::is_same_v<T, double>) {
-    return v;
-  } else {
-    return v[idx];
-  }
-}
-
-template<typename T>
-inline double QIE<T>::at(T v, const size_t idx)
-{
-  if constexpr (std::is_same_v<T, double>) {
-    return v;
-  } else {
-    return v[idx];
+    samples_v.push_back({qidx, bin_a, bin_b, d});
   }
 }
 
@@ -527,7 +601,7 @@ void DIM<T>::extract_intervals_sx(const uint64_t tau, const size_t idx)
   // O(n + k) where k = number of suffix minimum positions of fdps_v (k << n).
   // Every valid right endpoint b* is a suffix minimum of fdps_v.
   // Suffix minimum values are strictly increasing left-to-right,
-  // so the pointer into the list is monotone across record highs which is O(k) total.
+  // Hence, the pointer into the list is monotone across record highs which is O(k) total.
   struct xy_t
   {
     uint64_t pos;
@@ -686,8 +760,8 @@ void DIM<T>::map_contiguous_segments(uint8_t th_bv, char sign)
         mask |= static_cast<uint8_t>(1u << ti);
       }
     }
-    const double d_s = estimate_interval_distance(a - 1, b);
-    segments_v.push_back({a, b - 1, d_s, mask, sign});
+    const double d = estimate_interval_distance(a - 1, b);
+    segments_v.push_back({a, b - 1, d, mask, sign});
   }
   segments_v.back().end += 1;
 }
@@ -721,15 +795,17 @@ void QIE<T>::collect_segments(const DIM<T>& dim, double d_q, bool rc)
   const uint64_t L = enmers + k - 1;
   const auto& segments_v = dim.get_segments();
 
+  const size_t prev_size = records_v.size();
   for (const auto& ab : segments_v) {
-    // if (std::isnan(ab.d_s)) continue;
+    // if (std::isnan(ab.d)) continue; // This might help for filtering
     const uint64_t a = ((ab.start - 1) << params.bin_shift) + 1;
     const uint64_t b = std::min((ab.end << params.bin_shift), enmers);
-    // assert(a < b);
-    const uint64_t nbins_s = ab.end - ab.start;
-    records_v.emplace_back(bix, L, a, b, nbins_s, strand, ab.d_s, d_q, ab.mask, ab.sign);
+    assert(a < b);
+    records_v.emplace_back(bix, L, a, b, strand, d_q, ab, dim.get_rstrand());
   }
-  records_v.back().b = records_v.back().b + k - 1;
+  if (records_v.size() > prev_size) {
+    records_v.back().b += k - 1;
+  }
 }
 
 template<typename T>
@@ -758,10 +834,7 @@ void QIE<T>::save_qstride(const DIM<T>& dim)
 template<typename T>
 double QIE<T>::compute_mle_dist(const vec<uint64_t>& v, uint64_t u, uint64_t t)
 {
-  llhf->set_counts(v.data(), u);
-  auto f = [&](const double& D) { return (*llhf)(D); };
-  const double ub = (t == 0) ? 0.75 + eps : 0.5;
-  return boost::math::tools::brent_find_minima(f, eps, ub, 24).first;
+  return mle(llhf, v, u, t).first;
 }
 
 template<typename T>
@@ -770,10 +843,7 @@ double DIM<T>::estimate_interval_distance(uint64_t a, uint64_t b)
   vec<uint64_t> v;
   uint64_t u, t;
   extract_histogram(a, b, v, u, t);
-  llhf->set_counts(v.data(), u);
-  auto f = [&](const double& D) { return (*llhf)(D); };
-  const double ub = (t == 0) ? 0.75 + eps : 0.5;
-  return boost::math::tools::brent_find_minima(f, eps, ub, 24).first;
+  return mle(llhf, v, u, t).first;
 }
 
 template class QIE<double>;

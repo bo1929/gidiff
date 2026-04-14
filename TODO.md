@@ -7,6 +7,7 @@
 - Make sure that examples are fine and correct.
 - Make sure that the test is two-sided.
 - From each sampled segment, sample multiple distances based on the likelihood function (proportional to lrw, for example).
+- Extreme cases, exit early without calculations?
 
 ## Critical / Bugs
 

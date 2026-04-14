@@ -12,7 +12,6 @@ static constexpr double eps = 1e-10;
 static constexpr uint32_t hdist_bound = 7;
 static constexpr double grid_growth = 1.25;
 static constexpr double subsample_factor = 1.0;
-static constexpr uint64_t nsamples_per_length = 200;
 
 template<typename T>
 class QIE;
@@ -24,11 +23,19 @@ struct qstride_t
   vec<uint64_t> hdisthist_v; // subsampled prefix-sum rows, flattened [(nbins/G + 1) × W]
 };
 
+struct snull_t
+{
+  size_t qidx;    // query index
+  uint64_t start; // bin start
+  uint64_t end;   // bin end
+  double d;       // estimated distance
+};
+
 struct segment_t
 {
   uint64_t start;
   uint64_t end;
-  double d_s;
+  double d;
   uint8_t mask; // bitmask: bit i set iff threshold i hits this segment
   char sign;    // '<' for positive thresholds, '>' for negative thresholds
 };
@@ -39,32 +46,25 @@ struct record_t
   uint64_t L, a, b;
   uint64_t nbins_s;
   char strand;
-  double d_s, d_q;
+  bool rstrand; // reference strand: true if it the has lower genome-wide distance, false otherwise
+  double d, d_q;
   double percentile = std::numeric_limits<double>::quiet_NaN();
   double fold = std::numeric_limits<double>::quiet_NaN();
   uint8_t mask;
   char sign;
 
-  record_t(uint64_t bix,
-           uint64_t L,
-           uint64_t a,
-           uint64_t b,
-           uint64_t nbins_s,
-           char strand,
-           double d_s,
-           double d_q,
-           uint8_t mask,
-           char sign)
+  record_t(uint64_t bix, uint64_t L, uint64_t a, uint64_t b, char strand, double d_q, const segment_t& ab, bool rstrand)
     : bix(bix)
     , L(L)
     , a(a)
     , b(b)
-    , nbins_s(nbins_s)
+    , nbins_s(ab.end - ab.start)
     , strand(strand)
-    , d_s(d_s)
+    , rstrand(rstrand)
+    , d(ab.d)
     , d_q(d_q)
-    , mask(mask)
-    , sign(sign)
+    , mask(ab.mask)
+    , sign(ab.sign)
   {
   }
 };
@@ -75,8 +75,7 @@ class DIM
   static constexpr size_t WIDTH = std::is_same_v<T, double> ? 1 : RWIDTH;
 
 public:
-  DIM(const llh_sptr_t<T>& llhf, const params_t<T>& params, uint64_t nbins, uint64_t nmers);
-  static inline double at(T v, size_t idx);
+  DIM(const params_t<T>& params, const llh_sptr_t<T>& llhf, uint64_t nbins, uint64_t nmers);
   void release_accumulators() noexcept;
   void inclusive_scan();
   void extrema_scan();
@@ -87,8 +86,6 @@ public:
   void extract_intervals_sx(uint64_t tau, size_t idx = 0);
   void expand_intervals(double chisq_th, size_t idx = 0);
   [[nodiscard]] interval_t get_interval(uint64_t i, size_t idx = 0) const;
-  T fdc_at(uint64_t i) const { return fdc_v[i]; } // per-bin f'  contribution
-  T sdc_at(uint64_t i) const { return sdc_v[i]; } // per-bin f'' contribution
   const vec<uint64_t>& get_hdisthist() const { return hdisthist_v; }
   const vec<segment_t>& get_segments() const { return segments_v; }
   uint64_t get_nbins() const { return nbins; }
@@ -96,6 +93,8 @@ public:
   void map_contiguous_segments(uint8_t th_bv, char sign);
   double estimate_interval_distance(uint64_t a, uint64_t b);
   void extract_histogram(uint64_t a, uint64_t b, vec<uint64_t>& v, uint64_t& u, uint64_t& t) const;
+  bool get_rstrand() const { return rstrand; }
+  void set_rstrand(bool v) { rstrand = v; }
   static inline void add_to(T& dest, const T& source)
   {
     if constexpr (std::is_same_v<T, double>) {
@@ -115,6 +114,7 @@ private:
   const uint64_t nmers;      // number of k-mers in query (for per-k-mer HD tracking)
   uint64_t t_q = 0;          // total number of k-mers hits below hdist_th per query sequence
   uint64_t u_q = 0;          // total number misses per query sequence
+  bool rstrand = false;      // reference strand: set after per-query MLE comparison
   vec<uint64_t> hdisthist_v; // D[i][j] is the number of hits with HD=j, [(nbins+1) × (hdist_th+1)] row-major; D[0][j]=0
   vec<T> fdc_v;              // The f' contribution c_i of the k-mer (bin) starting at i
   vec<T> sdc_v;              // The f'' contribution s_i of the k-mer (bin) starting at i
@@ -135,27 +135,28 @@ class QIE
   static constexpr size_t WIDTH = std::is_same_v<T, double> ? 1 : RWIDTH;
 
 public:
-  QIE(const sketch_sptr_t& sketch,
+  QIE(const params_t<T>& params,
+      const sketch_sptr_t& sketch,
       const lshf_sptr_t& lshf,
       const vec<str>& seq_batch,
-      const vec<str>& qid_batch,
-      const params_t<T>& params);
+      const vec<str>& qid_batch);
   void map_sequences(std::ostream& sout, const str& rid);
 
 private:
-  static inline double at(T v, size_t idx);
   double compute_mle_dist(const vec<uint64_t>& v, uint64_t u, uint64_t t);
   void search_mers(const char* cseq, uint64_t len, DIM<T>& dim_fw, DIM<T>& dim_rc);
   void collect_segments(const DIM<T>& dim, double d_q, bool rc);
   void save_qstride(const DIM<T>& dim);
   void fit_gamma_significance();
-  void sample_distances(uint64_t L, vec<double>& dists_v) const;
+  void sample_distances(uint64_t L, vec<snull_t>& samples_v) const;
   void emit_segments(std::ostream& sout, const str& rid) const;
   void report_intervals(std::ostream& sout, const str& rid, DIM<T>& dim, bool rc, size_t idx = 0);
 
   const params_t<T>& params;
   const sketch_sptr_t sketch;
   const lshf_sptr_t lshf;
+  const vec<str>& seq_batch;
+  const vec<str>& qid_batch;
   const uint64_t batch_size;
   const uint32_t k;
   const uint32_t h;
@@ -167,9 +168,6 @@ private:
   uint64_t enmers; // Number of expected k-mers in current query (= len - k + 1)
   uint64_t nbins;  // Number of bins  (= ceil(enmers / bin_len))
   uint64_t bix;    // Index of the current query in the this batch
-
-  const vec<str>& seq_batch;
-  const vec<str>& qid_batch;
 
   double d_acc = std::numeric_limits<double>::quiet_NaN();
   uint64_t u_acc = 0;

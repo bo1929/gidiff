@@ -96,10 +96,12 @@ private:
   uint32_t hdist_th = 4;
   uint64_t tau = 1;
   uint64_t bin_shift = 0;
-  uint64_t total_qseq = 0;
   double chisq = 33.00051; // 1e-10
+  uint64_t nsamples = 1000;
+  bool ecdf_test = false;
   bool enum_only = false;
   std::vector<double> dist_th;
+  uint64_t total_qseq = 0;
 };
 
 class MergeSC
